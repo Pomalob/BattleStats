@@ -12,13 +12,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS battles (
     id          SERIAL PRIMARY KEY,
-    filename    TEXT NOT NULL UNIQUE,
+    filename    TEXT NOT NULL,
     map_name    TEXT NOT NULL,
     date_time   TEXT NOT NULL,
     result      TEXT NOT NULL,
     player_team INTEGER NOT NULL,
     winner_team INTEGER NOT NULL,
-    created_at  TIMESTAMPTZ DEFAULT NOW()
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (date_time, map_name)
 );
 
 CREATE TABLE IF NOT EXISTS player_stats (
@@ -60,10 +61,17 @@ def get_conn():
     return psycopg2.connect(url, cursor_factory=RealDictCursor)
 
 
+_MIGRATIONS = """
+ALTER TABLE battles DROP CONSTRAINT IF EXISTS battles_filename_key;
+ALTER TABLE battles ADD CONSTRAINT IF NOT EXISTS battles_datetime_map_key UNIQUE (date_time, map_name);
+"""
+
+
 def init_db():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(_DDL)
+            cur.execute(_MIGRATIONS)
         conn.commit()
 
 
@@ -95,11 +103,11 @@ def get_user_by_username(username: str) -> dict | None:
 # --- Battles ---
 
 def save_battle(battle_dict: dict, user_id: int | None = None) -> bool:
-    """Insert battle + stats. Links to user via user_battles. Returns True if new battle."""
+    """Insert battle + stats. Deduplicates by (date_time, map_name). Returns True if new."""
     sql_battle = """
         INSERT INTO battles (filename, map_name, date_time, result, player_team, winner_team)
         VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(result)s, %(player_team)s, %(winner_team)s)
-        ON CONFLICT (filename) DO NOTHING
+        ON CONFLICT (date_time, map_name) DO NOTHING
         RETURNING id
     """
     sql_player = """
@@ -121,7 +129,10 @@ def save_battle(battle_dict: dict, user_id: int | None = None) -> bool:
                     cur.execute(sql_player, {**p, "battle_id": battle_id})
                 is_new = True
             else:
-                cur.execute("SELECT id FROM battles WHERE filename = %s", (battle_dict["filename"],))
+                cur.execute(
+                    "SELECT id FROM battles WHERE date_time = %s AND map_name = %s",
+                    (battle_dict["date_time"], battle_dict["map_name"]),
+                )
                 existing = cur.fetchone()
                 battle_id = existing["id"] if existing else None
                 is_new = False
