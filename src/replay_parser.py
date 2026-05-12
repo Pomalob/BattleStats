@@ -65,9 +65,10 @@ def _vehicle_name(raw: str) -> str:
     return name.replace("_", " ")
 
 
-def _make_battle_hash(player_names: list[str]) -> str:
-    """Stable hash of sorted player names — identical for all replays of the same battle."""
-    key = ",".join(sorted(player_names))
+def _make_battle_hash(players: list["PlayerResult"], map_name: str) -> str:
+    """Stable hash of map + sorted (name, damage) — identical for all replays of the same battle."""
+    parts = sorted(f"{p.name}:{p.damage_dealt}" for p in players)
+    key = map_name + "|" + ",".join(parts)
     return hashlib.md5(key.encode()).hexdigest()
 
 
@@ -116,7 +117,7 @@ def parse_replay(path: str | Path) -> BattleResult:
             if isinstance(v, dict)
         ]
         players.sort(key=lambda p: (p.team, -p.damage_dealt))
-        battle_hash = _make_battle_hash([p.name for p in players])
+        battle_hash = _make_battle_hash(players, map_name)
         return BattleResult(
             filename=filename,
             map_name=map_name,
@@ -176,7 +177,7 @@ def parse_replay(path: str | Path) -> BattleResult:
         ))
 
     players.sort(key=lambda p: (p.team, -p.damage_dealt))
-    battle_hash = _make_battle_hash([p.name for p in players])
+    battle_hash = _make_battle_hash(players, map_name)
 
     return BattleResult(
         filename=filename,
