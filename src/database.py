@@ -61,17 +61,22 @@ def get_conn():
     return psycopg2.connect(url, cursor_factory=RealDictCursor)
 
 
-_MIGRATIONS = """
-ALTER TABLE battles DROP CONSTRAINT IF EXISTS battles_filename_key;
-ALTER TABLE battles ADD CONSTRAINT IF NOT EXISTS battles_datetime_map_key UNIQUE (date_time, map_name);
-"""
-
-
 def init_db():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(_DDL)
-            cur.execute(_MIGRATIONS)
+            # Migration: switch unique key from filename → (date_time, map_name)
+            try:
+                cur.execute("ALTER TABLE battles DROP CONSTRAINT IF EXISTS battles_filename_key")
+            except Exception:
+                conn.rollback()
+            try:
+                cur.execute(
+                    "ALTER TABLE battles ADD CONSTRAINT battles_datetime_map_key"
+                    " UNIQUE (date_time, map_name)"
+                )
+            except Exception:
+                conn.rollback()  # constraint already exists — fine
         conn.commit()
 
 
