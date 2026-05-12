@@ -364,6 +364,7 @@
         Аналитика
       </a>
       <span class="session-pill idle" id="session-pill">Нет данных</span>
+      <button onclick="logout()" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;">Выйти</button>
     </div>
   </header>
 
@@ -399,6 +400,10 @@
 </div>
 
 <script>
+  // Auth guard
+  const _token = localStorage.getItem('sb_token');
+  if (!_token) window.location.href = '/login';
+
   const dropzone    = document.getElementById('dropzone');
   const fileInput   = document.getElementById('file-input');
   const loading     = document.getElementById('loading');
@@ -407,6 +412,17 @@
   const alertsEl    = document.getElementById('alerts');
   const sessionPill = document.getElementById('session-pill');
   const matricesEl  = document.getElementById('matrices');
+
+  // Show username
+  const _username = localStorage.getItem('sb_username') ?? '';
+  document.getElementById('session-pill').textContent = _username;
+  document.getElementById('session-pill').classList.remove('idle');
+
+  function logout() {
+    localStorage.removeItem('sb_token');
+    localStorage.removeItem('sb_username');
+    window.location.href = '/login';
+  }
 
   const resultLabel = { win: 'WIN', loss: 'LOSS', draw: 'DRAW' };
 
@@ -446,7 +462,10 @@
     mainContent.style.display = 'none';
     alertsEl.innerHTML = '';
     try {
-      const res  = await fetch('/api/upload', { method: 'POST', body: fd });
+      const res  = await fetch('/api/upload', {
+        method: 'POST', body: fd,
+        headers: { 'Authorization': `Bearer ${_token}` },
+      });
       const data = await res.json();
       if (!res.ok) { showAlert(`Ошибка сервера ${res.status}`, data?.detail ?? JSON.stringify(data)); return; }
       renderAll(data);

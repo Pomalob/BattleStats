@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>StatsBattle — Вход</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --surface-2: #1c232c; --surface-3: #21262d;
+    --border: #30363d; --text: #e6edf3; --text-muted: #7d8590;
+    --accent: #1f6feb; --accent-hover: #388bfd;
+    --win: #3fb950; --loss: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px; -webkit-font-smoothing: antialiased; }
+  body { display: flex; align-items: center; justify-content: center; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 32px; width: 100%; max-width: 380px;
+  }
+  .brand { text-align: center; margin-bottom: 28px; }
+  .brand-title { font-size: 24px; font-weight: 700; }
+  .brand-title .accent { color: var(--accent); }
+  .brand-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+  .tabs { display: flex; background: var(--surface-3); border-radius: 8px; padding: 3px; margin-bottom: 24px; }
+  .tab {
+    flex: 1; text-align: center; padding: 7px; border-radius: 6px;
+    font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-muted);
+    transition: background 0.15s, color 0.15s;
+  }
+  .tab.active { background: var(--surface-2); color: var(--text); }
+
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .field input {
+    width: 100%; background: var(--surface-3); border: 1px solid var(--border);
+    border-radius: 6px; padding: 9px 12px; color: var(--text); font-size: 14px;
+    font-family: inherit; outline: none; transition: border-color 0.15s;
+  }
+  .field input:focus { border-color: var(--accent); }
+
+  .btn {
+    width: 100%; padding: 10px; border-radius: 6px; border: none;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 600;
+    cursor: pointer; font-family: inherit; margin-top: 4px; transition: background 0.15s;
+  }
+  .btn:hover { background: var(--accent-hover); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .error { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.35); border-radius: 6px; padding: 10px 12px; font-size: 13px; color: var(--loss); margin-bottom: 16px; display: none; }
+  .error.visible { display: block; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">
+    <div class="brand-title">Stats<span class="accent">Battle</span></div>
+    <div class="brand-sub">Мир Танков · Клановые бои</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" id="tab-login" onclick="switchTab('login')">Войти</div>
+    <div class="tab" id="tab-register" onclick="switchTab('register')">Регистрация</div>
+  </div>
+
+  <div id="error-msg" class="error"></div>
+
+  <div class="field">
+    <label>Имя пользователя</label>
+    <input type="text" id="username" autocomplete="username" placeholder="nickname" />
+  </div>
+  <div class="field">
+    <label>Пароль</label>
+    <input type="password" id="password" autocomplete="current-password" placeholder="••••••" />
+  </div>
+
+  <button class="btn" id="submit-btn" onclick="submit()">Войти</button>
+</div>
+
+<script>
+  let mode = 'login';
+
+  function switchTab(m) {
+    mode = m;
+    document.getElementById('tab-login').classList.toggle('active', m === 'login');
+    document.getElementById('tab-register').classList.toggle('active', m === 'register');
+    document.getElementById('submit-btn').textContent = m === 'login' ? 'Войти' : 'Зарегистрироваться';
+    document.getElementById('error-msg').classList.remove('visible');
+  }
+
+  document.getElementById('password').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submit();
+  });
+
+  async function submit() {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    const errEl = document.getElementById('error-msg');
+    const btn = document.getElementById('submit-btn');
+
+    errEl.classList.remove('visible');
+    btn.disabled = true;
+
+    try {
+      const res = await fetch(`/api/auth/${mode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errEl.textContent = data.detail ?? 'Ошибка';
+        errEl.classList.add('visible');
+        return;
+      }
+      localStorage.setItem('sb_token', data.token);
+      localStorage.setItem('sb_username', data.username);
+      window.location.href = '/';
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.classList.add('visible');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // redirect if already logged in
+  if (localStorage.getItem('sb_token')) window.location.href = '/';
+</script>
+</body>
+</html>

@@ -3,6 +3,13 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 _DDL = """
+CREATE TABLE IF NOT EXISTS users (
+    id            SERIAL PRIMARY KEY,
+    username      TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS battles (
     id          SERIAL PRIMARY KEY,
     filename    TEXT NOT NULL UNIQUE,
@@ -29,9 +36,16 @@ CREATE TABLE IF NOT EXISTS player_stats (
     survived        BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+CREATE TABLE IF NOT EXISTS user_battles (
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    battle_id INTEGER NOT NULL REFERENCES battles(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, battle_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_player_stats_battle ON player_stats(battle_id);
 CREATE INDEX IF NOT EXISTS idx_player_stats_name   ON player_stats(name);
 CREATE INDEX IF NOT EXISTS idx_battles_date        ON battles(date_time);
+CREATE INDEX IF NOT EXISTS idx_user_battles_user   ON user_battles(user_id);
 """
 
 
@@ -39,10 +53,8 @@ def get_conn():
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL not set")
-    # psycopg2 requires postgresql://, Railway often gives postgres://
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
-    # Railway requires SSL
     if "sslmode" not in url:
         url += ("&" if "?" in url else "?") + "sslmode=require"
     return psycopg2.connect(url, cursor_factory=RealDictCursor)
@@ -55,8 +67,35 @@ def init_db():
         conn.commit()
 
 
-def save_battle(battle_dict: dict) -> int | None:
-    """Insert battle + player_stats. Returns battle id, or None if duplicate."""
+# --- Auth ---
+
+def create_user(username: str, password_hash: str) -> dict | None:
+    sql = """
+        INSERT INTO users (username, password_hash)
+        VALUES (%s, %s)
+        ON CONFLICT (username) DO NOTHING
+        RETURNING id, username
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (username, password_hash))
+            row = cur.fetchone()
+        conn.commit()
+    return dict(row) if row else None
+
+
+def get_user_by_username(username: str) -> dict | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, username, password_hash FROM users WHERE username = %s", (username,))
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
+# --- Battles ---
+
+def save_battle(battle_dict: dict, user_id: int | None = None) -> bool:
+    """Insert battle + stats. Links to user via user_battles. Returns True if new battle."""
     sql_battle = """
         INSERT INTO battles (filename, map_name, date_time, result, player_team, winner_team)
         VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(result)s, %(player_team)s, %(winner_team)s)
@@ -75,17 +114,57 @@ def save_battle(battle_dict: dict) -> int | None:
         with conn.cursor() as cur:
             cur.execute(sql_battle, battle_dict)
             row = cur.fetchone()
-            if not row:
-                return None
-            battle_id = row["id"]
-            for p in battle_dict["players"]:
-                cur.execute(sql_player, {**p, "battle_id": battle_id})
+
+            if row:
+                battle_id = row["id"]
+                for p in battle_dict["players"]:
+                    cur.execute(sql_player, {**p, "battle_id": battle_id})
+                is_new = True
+            else:
+                cur.execute("SELECT id FROM battles WHERE filename = %s", (battle_dict["filename"],))
+                existing = cur.fetchone()
+                battle_id = existing["id"] if existing else None
+                is_new = False
+
+            if user_id and battle_id:
+                cur.execute(
+                    "INSERT INTO user_battles (user_id, battle_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (user_id, battle_id),
+                )
         conn.commit()
-    return battle_id
+    return is_new
 
 
-def get_player_summary() -> list[dict]:
-    sql = """
+# --- Analytics ---
+
+def _user_filter(user_id: int | None) -> tuple[str, list]:
+    """Returns extra JOIN + WHERE clause and params for user filtering."""
+    if user_id:
+        return "JOIN user_battles ub ON ub.battle_id = b.id AND ub.user_id = %s", [user_id]
+    return "", []
+
+
+def get_db_totals(user_id: int | None = None) -> dict:
+    join, params = _user_filter(user_id)
+    sql = f"""
+        SELECT
+            COUNT(*)                                           AS total_battles,
+            SUM(CASE WHEN result = 'win'  THEN 1 ELSE 0 END) AS wins,
+            SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses,
+            SUM(CASE WHEN result = 'draw' THEN 1 ELSE 0 END) AS draws,
+            MIN(date_time)                                     AS first_battle,
+            MAX(date_time)                                     AS last_battle
+        FROM battles b {join}
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return dict(cur.fetchone())
+
+
+def get_player_summary(user_id: int | None = None) -> list[dict]:
+    join, params = _user_filter(user_id)
+    sql = f"""
         SELECT
             ps.name,
             COUNT(DISTINCT ps.battle_id)                                  AS battles,
@@ -101,37 +180,40 @@ def get_player_summary() -> list[dict]:
             ROUND(AVG(CASE WHEN b.result = 'loss' THEN ps.damage_dealt END)) AS avg_dmg_loss
         FROM player_stats ps
         JOIN battles b ON b.id = ps.battle_id
+        {join}
         WHERE ps.team = b.player_team
         GROUP BY ps.name
         ORDER BY avg_damage DESC
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
 
 
-def get_map_summary() -> list[dict]:
-    sql = """
+def get_map_summary(user_id: int | None = None) -> list[dict]:
+    join, params = _user_filter(user_id)
+    sql = f"""
         SELECT
             map_name,
             COUNT(*)                                            AS battles,
             SUM(CASE WHEN result = 'win'  THEN 1 ELSE 0 END)  AS wins,
             SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END)  AS losses,
             SUM(CASE WHEN result = 'draw' THEN 1 ELSE 0 END)  AS draws,
-            ROUND(AVG(CASE WHEN result = 'win'  THEN 1 ELSE 0 END) * 100) AS winrate
-        FROM battles
+            ROUND(AVG(CASE WHEN result = 'win' THEN 1 ELSE 0 END) * 100) AS winrate
+        FROM battles b {join}
         GROUP BY map_name
         ORDER BY battles DESC
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
 
 
-def get_vehicle_summary() -> list[dict]:
-    sql = """
+def get_vehicle_summary(user_id: int | None = None) -> list[dict]:
+    join, params = _user_filter(user_id)
+    sql = f"""
         SELECT
             ps.name,
             ps.vehicle,
@@ -143,28 +225,12 @@ def get_vehicle_summary() -> list[dict]:
             SUM(CASE WHEN b.result = 'loss' THEN 1 ELSE 0 END)           AS losses
         FROM player_stats ps
         JOIN battles b ON b.id = ps.battle_id
+        {join}
         WHERE ps.team = b.player_team
         GROUP BY ps.name, ps.vehicle
         ORDER BY ps.name, battles DESC
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
-
-
-def get_db_totals() -> dict:
-    sql = """
-        SELECT
-            COUNT(*)                                           AS total_battles,
-            SUM(CASE WHEN result = 'win'  THEN 1 ELSE 0 END) AS wins,
-            SUM(CASE WHEN result = 'loss' THEN 1 ELSE 0 END) AS losses,
-            SUM(CASE WHEN result = 'draw' THEN 1 ELSE 0 END) AS draws,
-            MIN(date_time)                                     AS first_battle,
-            MAX(date_time)                                     AS last_battle
-        FROM battles
-    """
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            return dict(cur.fetchone())
