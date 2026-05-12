@@ -1,3 +1,4 @@
+import re
 import struct
 import json
 from pathlib import Path
@@ -28,6 +29,7 @@ class BattleResult:
     date_time: str
     winner_team: int
     player_team: int
+    player_vehicle: str
     players: list[PlayerResult]
 
     @property
@@ -53,8 +55,12 @@ def _read_blocks_mt(data: bytes) -> tuple[bytes, bytes | None]:
 
 
 def _vehicle_name(raw: str) -> str:
-    """'nation:Tank_Name_Suffix' → 'Tank Name Suffix'"""
-    return raw.split(":")[-1].replace("_", " ") if raw else ""
+    """'ussr:R231_Object_278' → 'Object 278'"""
+    if not raw:
+        return ""
+    name = raw.split(":")[-1]
+    name = re.sub(r'^[A-Za-z]+\d+_', '', name)  # strip nation prefix: R231_, G100_, Ch45_, etc.
+    return name.replace("_", " ")
 
 
 def parse_replay(path: str | Path) -> BattleResult:
@@ -76,9 +82,11 @@ def parse_replay(path: str | Path) -> BattleResult:
     meta_vehicles: dict = meta.get("vehicles", {})
 
     player_team = 0
+    player_vehicle = ""
     for v in meta_vehicles.values():
         if isinstance(v, dict) and v.get("name") == player_name:
             player_team = v.get("team", 0)
+            player_vehicle = _vehicle_name(v.get("vehicleType", ""))
             break
 
     if not block2_raw:
@@ -106,6 +114,7 @@ def parse_replay(path: str | Path) -> BattleResult:
             date_time=date_time,
             winner_team=0,
             player_team=player_team,
+            player_vehicle=player_vehicle,
             players=players,
         )
 
@@ -164,5 +173,6 @@ def parse_replay(path: str | Path) -> BattleResult:
         date_time=date_time,
         winner_team=winner_team,
         player_team=player_team,
+        player_vehicle=player_vehicle,
         players=players,
     )

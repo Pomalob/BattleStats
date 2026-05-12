@@ -292,6 +292,7 @@
   .b-badge.draw { background: var(--draw-bg); color: var(--draw); border: 1px solid rgba(139,148,158,0.35); }
   .b-map { color: var(--text); font-size: 11px; font-weight: 500; font-family: 'Inter', sans-serif; }
   .b-idx { color: var(--text-dim); font-size: 9.5px; font-family: 'JetBrains Mono', monospace; }
+  .b-vehicle { color: var(--accent); font-size: 9.5px; font-family: 'Inter', sans-serif; font-weight: 500; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   td.dmg { font-weight: 500; font-size: 13px; }
   td.heat-none { color: var(--text-dim); font-size: 14px; }
@@ -652,6 +653,7 @@
     const headCols = battles.map((b, bi) => `<th><div class="b-head">
       <span class="b-badge ${b.result || 'draw'}">${resultLabel[b.result] ?? '?'}</span>
       <span class="b-map" title="${b.map_name}">${b.map_name.length > 10 ? b.map_name.slice(0,9)+'…' : b.map_name}</span>
+      ${b.player_vehicle ? `<span class="b-vehicle" title="${b.player_vehicle}">${b.player_vehicle.length > 12 ? b.player_vehicle.slice(0,11)+'…' : b.player_vehicle}</span>` : ''}
       <span class="b-idx">#${String(bi+1).padStart(2,'0')}</span>
     </div></th>`).join('');
 

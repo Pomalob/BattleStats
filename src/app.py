@@ -64,6 +64,7 @@ def battle_to_dict(b) -> dict:
         "result": b.result,
         "winner_team": b.winner_team,
         "player_team": b.player_team,
+        "player_vehicle": b.player_vehicle,
         "players": [
             {
                 "name": p.name,
