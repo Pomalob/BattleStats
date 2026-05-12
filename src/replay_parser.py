@@ -8,6 +8,73 @@ from dataclasses import dataclass
 # .mtreplay magic bytes (first 4 bytes of file)
 _MT_MAGIC = bytes([0x12, 0x32, 0x34, 0x11])
 
+_MAP_NAMES: dict[str, str] = {
+    "01_karelia":           "Карелия",
+    "02_malinovka":         "Малиновка",
+    "03_campania":          "Кампания",
+    "04_himmelsdorf":       "Химмельсдорф",
+    "05_prohorovka":        "Прохоровка",
+    "06_ensk":              "Энск",
+    "07_lakeville":         "Лейквилл",
+    "08_ruinberg":          "Руинберг",
+    "10_hills":             "Рудники",
+    "11_murovanka":         "Муровянка",
+    "13_erlenberg":         "Эрленберг",
+    "14_siegfried_line":    "Линия Зигфрида",
+    "15_komarin":           "Комарин",
+    "17_munchen":           "Мюнхен",
+    "18_cliff":             "Утёс",
+    "19_monastery":         "Монастырь",
+    "22_slough_of_despond": "Болото",
+    "23_westfeld":          "Вестфилд",
+    "28_desert_sands":      "Пустынные пески",
+    "29_el_halluf":         "Эль-Халлюф",
+    "31_airfield":          "Аэродром",
+    "33_fjord":             "Фьорд",
+    "34_redshire":          "Рэдшир",
+    "35_steppes":           "Степи",
+    "36_fishing_bay":       "Рыбацкая бухта",
+    "37_caucasus":          "Кавказ",
+    "38_mannerheim_line":   "Линия Маннергейма",
+    "40_nord":              "Атолл",
+    "41_conquest":          "Порт",
+    "42_north_america":     "Шоссе",
+    "44_north_america":     "Северная Америка",
+    "46_north_america":     "Северная Америка",
+    "47_canada_a":          "Канада",
+    "49_graveyard":         "Заброшенный городок",
+    "51_asia":              "Священная долина",
+    "52_asia":              "Тихий берег",
+    "53_asia":              "Шторм",
+    "55_asia":              "Жемчужная река",
+    "58_asia":              "Тундра",
+    "62_desert_border":     "Оверлорд",
+    "63_winterberg":        "Зимберг",
+    "64_winter_himmelsdorf": "Зимний Химмельсдорф",
+    "73_asia":              "Песчаная река",
+    "74_asia":              "Живые дубы",
+    "75_asia":              "Линия обороны",
+    "76_asia":              "Горная гряда",
+    "77_asia":              "Энкаунтер",
+    "86_steamroller":       "Паровой каток",
+    "87_winterberg":        "Зимберг",
+    "88_coast":             "Берег",
+    "93_rock":              "Скала",
+    "94_airfield_02":       "Аэродром",
+    "95_lost_city":         "Потерянный город",
+    "96_rift":              "Разлом",
+    "97_wasteland":         "Пустошь",
+}
+
+
+def _map_display(internal: str) -> str:
+    """Translate internal map ID to display name, fall back to cleaned-up ID."""
+    if internal in _MAP_NAMES:
+        return _MAP_NAMES[internal]
+    # Strip leading number: "05_prohorovka" → "Prohorovka"
+    cleaned = re.sub(r'^\d+_', '', internal).replace("_", " ").title()
+    return cleaned or internal
+
 
 @dataclass
 class PlayerResult:
@@ -83,7 +150,8 @@ def parse_replay(path: str | Path) -> BattleResult:
 
     meta: dict = json.loads(block1_raw.decode("utf-8", errors="replace"))
 
-    map_name: str = meta.get("mapName") or meta.get("mapDisplayName") or "Unknown"
+    map_internal: str = meta.get("mapName") or ""
+    map_name: str = _map_display(map_internal) if map_internal else (meta.get("mapDisplayName") or "Unknown")
     date_time: str = meta.get("dateTime", "")
     player_name: str = meta.get("playerName", "")
 
@@ -117,7 +185,7 @@ def parse_replay(path: str | Path) -> BattleResult:
             if isinstance(v, dict)
         ]
         players.sort(key=lambda p: (p.team, -p.damage_dealt))
-        battle_hash = _make_battle_hash(players, map_name)
+        battle_hash = _make_battle_hash(players, map_internal)
         return BattleResult(
             filename=filename,
             map_name=map_name,
@@ -177,7 +245,7 @@ def parse_replay(path: str | Path) -> BattleResult:
         ))
 
     players.sort(key=lambda p: (p.team, -p.damage_dealt))
-    battle_hash = _make_battle_hash(players, map_name)
+    battle_hash = _make_battle_hash(players, map_internal)
 
     return BattleResult(
         filename=filename,
