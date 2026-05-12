@@ -39,7 +39,10 @@ def get_conn():
     url = os.environ.get("DATABASE_URL")
     if not url:
         raise RuntimeError("DATABASE_URL not set")
-    # Railway requires SSL; append if not already specified
+    # psycopg2 requires postgresql://, Railway often gives postgres://
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    # Railway requires SSL
     if "sslmode" not in url:
         url += ("&" if "?" in url else "?") + "sslmode=require"
     return psycopg2.connect(url, cursor_factory=RealDictCursor)

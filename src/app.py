@@ -23,11 +23,14 @@ _DB_AVAILABLE = False
 @app.on_event("startup")
 def startup():
     global _DB_AVAILABLE
+    import os, traceback
+    url = os.environ.get("DATABASE_URL", "")
+    print(f"[DB] DATABASE_URL set: {bool(url)}, prefix: {url[:20] if url else 'none'}")
     try:
         init_db()
         _DB_AVAILABLE = True
+        print("[DB] init OK")
     except Exception as e:
-        import traceback
         print(f"[DB] init failed: {e}")
         traceback.print_exc()
         _DB_AVAILABLE = False
