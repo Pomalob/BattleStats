@@ -14,6 +14,8 @@ class PlayerResult:
     team: int
     damage_dealt: int
     damage_received: int
+    blocked: int
+    assists: int
     frags: int
     xp: int
     survived: bool
@@ -88,6 +90,8 @@ def parse_replay(path: str | Path) -> BattleResult:
                 team=v.get("team", 0),
                 damage_dealt=0,
                 damage_received=0,
+                blocked=0,
+                assists=0,
                 frags=0,
                 xp=0,
                 survived=False,
@@ -133,6 +137,8 @@ def parse_replay(path: str | Path) -> BattleResult:
         team: int = v.get("team", 0)
         damage_dealt: int = v.get("damageDealt", 0)
         damage_received: int = v.get("damageReceived", 0)
+        blocked: int = v.get("damageBlockedByArmor", 0)
+        assists: int = v.get("damageAssistedRadio", 0) + v.get("damageAssistedTrack", 0)
         frags: int = v.get("kills", 0)
         xp: int = v.get("xp", 0)
         survived: bool = v.get("deathReason", -1) == -1
@@ -143,6 +149,8 @@ def parse_replay(path: str | Path) -> BattleResult:
             team=team,
             damage_dealt=damage_dealt,
             damage_received=damage_received,
+            blocked=blocked,
+            assists=assists,
             frags=frags,
             xp=xp,
             survived=survived,

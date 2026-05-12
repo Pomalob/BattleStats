@@ -303,6 +303,26 @@
   td.sticky-r .avg-val { font-size: 14px; }
   td.sticky-r .avg-sub { display: block; color: var(--text-muted); font-size: 10px; font-weight: 400; font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
 
+  .metric-tabs { display: flex; gap: 4px; }
+  .metric-btn {
+    background: var(--surface-3); border: 1px solid var(--border);
+    color: var(--text-muted); font-size: 11.5px; padding: 4px 10px;
+    border-radius: 5px; cursor: pointer; font-family: inherit; white-space: nowrap;
+    transition: color 0.1s, border-color 0.1s;
+  }
+  .metric-btn:hover { color: var(--text); border-color: #444c56; }
+  .metric-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .combo-top { display: block; font-size: 12.5px; }
+  .combo-bot { display: block; font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+  td.cell-combo { height: auto; padding: 5px 8px; line-height: 1; }
+
+  td.frag-0 { color: var(--text-dim); }
+  td.frag-1 { color: var(--heat-low); }
+  td.frag-2 { color: var(--heat-mid); font-weight: 600; }
+  td.frag-3 { color: var(--heat-high); font-weight: 700; }
+  td.frag-4 { color: var(--heat-top); font-weight: 700; background: rgba(63,185,80,0.06); }
+
   .empty-row td { text-align: center !important; padding: 32px !important; color: var(--text-muted); font-family: 'Inter', sans-serif; }
 
   /* loading */
@@ -375,6 +395,12 @@
     <div class="table-card">
       <div class="table-meta">
         <div id="table-meta-text"><strong>Team damage matrix</strong></div>
+        <div class="metric-tabs">
+          <button class="metric-btn active" data-metric="damage">Урон</button>
+          <button class="metric-btn" data-metric="assists">Ассист</button>
+          <button class="metric-btn" data-metric="combo">Заблок / Получен</button>
+          <button class="metric-btn" data-metric="frags">Фраги</button>
+        </div>
       </div>
       <div class="table-scroll">
         <table class="stats" id="stats-table">
@@ -388,18 +414,28 @@
 </div>
 
 <script>
-  const dropzone   = document.getElementById('dropzone');
-  const fileInput  = document.getElementById('file-input');
-  const loading    = document.getElementById('loading');
+  const dropzone    = document.getElementById('dropzone');
+  const fileInput   = document.getElementById('file-input');
+  const loading     = document.getElementById('loading');
   const mainContent = document.getElementById('main-content');
-  const summaryEl  = document.getElementById('summary');
-  const alertsEl   = document.getElementById('alerts');
+  const summaryEl   = document.getElementById('summary');
+  const alertsEl    = document.getElementById('alerts');
   const sessionPill = document.getElementById('session-pill');
   const tableMetaText = document.getElementById('table-meta-text');
-  const tableHead  = document.getElementById('table-head');
-  const tableBody  = document.getElementById('table-body');
+  const tableHead   = document.getElementById('table-head');
+  const tableBody   = document.getElementById('table-body');
 
-  let tableData = null;
+  let tableData  = null;
+  let curMetric  = 'damage';
+
+  document.querySelectorAll('.metric-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.metric-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      curMetric = btn.dataset.metric;
+      applyFilterAndSort();
+    });
+  });
 
   dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
@@ -419,7 +455,7 @@
     alertsEl.innerHTML = '';
 
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const res  = await fetch('/api/upload', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) {
         showAlert(`Ошибка сервера ${res.status}`, data?.detail ?? JSON.stringify(data));
@@ -448,6 +484,11 @@
     mainContent.style.display = 'block';
   }
 
+  function avg(arr) {
+    const vals = arr.filter(v => v !== null);
+    return vals.length ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : 0;
+  }
+
   function renderAll({ battles = [], errors = [] }) {
     if (errors.length) {
       alertsEl.innerHTML = `
@@ -472,9 +513,9 @@
     const losses = battles.filter(b => b.result === 'loss').length;
     const draws  = battles.filter(b => b.result === 'draw').length;
     const total  = battles.length;
-    const winPct   = Math.round(wins   / total * 100);
-    const lossPct  = Math.round(losses / total * 100);
-    const drawPct  = Math.round(draws  / total * 100);
+    const winPct  = Math.round(wins  / total * 100);
+    const lossPct = Math.round(losses / total * 100);
+    const drawPct = Math.round(draws  / total * 100);
 
     sessionPill.textContent = `${total} реплей${total === 1 ? '' : total < 5 ? 'а' : 'ев'} загружено`;
     sessionPill.classList.remove('idle');
@@ -504,24 +545,41 @@
         <div class="bar bar-draw"><span style="width:${drawPct}%"></span></div>
       </div>`;
 
-    // Build matrix: player × battle, only player's team
-    const sortedBattles = [...battles].reverse(); // chronological order
+    const sortedBattles = [...battles].reverse();
     const playerMap = new Map();
 
     sortedBattles.forEach((b, bi) => {
       b.players
         .filter(p => p.team === b.player_team)
         .forEach(p => {
-          if (!playerMap.has(p.name)) playerMap.set(p.name, new Array(sortedBattles.length).fill(null));
-          playerMap.get(p.name)[bi] = p.damage_dealt;
+          if (!playerMap.has(p.name)) {
+            playerMap.set(p.name, {
+              damage:   new Array(sortedBattles.length).fill(null),
+              assists:  new Array(sortedBattles.length).fill(null),
+              blocked:  new Array(sortedBattles.length).fill(null),
+              received: new Array(sortedBattles.length).fill(null),
+              frags:    new Array(sortedBattles.length).fill(null),
+            });
+          }
+          const s = playerMap.get(p.name);
+          s.damage[bi]   = p.damage_dealt;
+          s.assists[bi]  = p.assists;
+          s.blocked[bi]  = p.blocked;
+          s.received[bi] = p.damage_received;
+          s.frags[bi]    = p.frags;
         });
     });
 
     const rows = [];
-    playerMap.forEach((damages, name) => {
-      const played = damages.filter(d => d !== null);
-      const avg = played.length ? Math.round(played.reduce((s, d) => s + d, 0) / played.length) : 0;
-      rows.push({ name, damages, avg, played: played.length });
+    playerMap.forEach((stats, name) => {
+      const played = stats.damage.filter(v => v !== null).length;
+      rows.push({ name, stats, played,
+        avgDamage:   avg(stats.damage),
+        avgAssists:  avg(stats.assists),
+        avgBlocked:  avg(stats.blocked),
+        avgReceived: avg(stats.received),
+        avgFrags:    avg(stats.frags),
+      });
     });
 
     tableData = { battles: sortedBattles, rows };
@@ -531,18 +589,32 @@
 
   const resultLabel = { win: 'WIN', loss: 'LOSS', draw: 'DRAW' };
 
+  const metricMeta = {
+    damage:  { label: 'Team damage matrix',           col: 'Ср. урон ↓' },
+    assists: { label: 'Team assist matrix',            col: 'Ср. ассист ↓' },
+    combo:   { label: 'Blocked / Received matrix',     col: 'Заблок / Получен ↓' },
+    frags:   { label: 'Team frags matrix',             col: 'Ср. фраги ↓' },
+  };
+
+  function heatClass(val, colMax) {
+    if (val === null) return 'heat-none';
+    const ratio = val / colMax;
+    if (val === 0)       return 'heat-none';
+    if (ratio < 0.25)    return 'heat-low';
+    if (ratio < 0.55)    return 'heat-mid';
+    if (ratio < 0.85)    return 'heat-high';
+    return 'heat-top';
+  }
+
   function applyFilterAndSort() {
     if (!tableData) return;
     const { battles, rows } = tableData;
 
-    const filtered = [...rows].sort((a, b) => b.avg - a.avg);
+    const sortKey = { damage: 'avgDamage', assists: 'avgAssists', combo: 'avgBlocked', frags: 'avgFrags' }[curMetric];
+    const filtered = [...rows].sort((a, b) => b[sortKey] - a[sortKey]);
 
-    // Per-column max for heat colouring
-    const colMax = battles.map((_, bi) =>
-      Math.max(...rows.map(r => r.damages[bi] ?? 0), 1)
-    );
+    const meta = metricMeta[curMetric];
 
-    // Table header
     const headCols = battles.map((b, bi) => `
       <th>
         <div class="b-head">
@@ -555,40 +627,83 @@
     tableHead.innerHTML = `<tr>
       <th class="sticky-l">Игрок</th>
       ${headCols}
-      <th class="sticky-r">Ср. урон ↓</th>
+      <th class="sticky-r">${meta.col}</th>
     </tr>`;
 
-    // Table body
     if (!filtered.length) {
-      tableBody.innerHTML = `<tr class="empty-row"><td colspan="${battles.length + 2}">Нет игроков с таким уровнем урона</td></tr>`;
-    } else {
-      tableBody.innerHTML = filtered.map(r => {
-        const dmgCells = r.damages.map((d, bi) => {
-          if (d === null) return `<td class="heat-none">—</td>`;
-          const ratio = d / colMax[bi];
-          const cls = d === 0 ? 'heat-none' : ratio < 0.25 ? 'heat-low' : ratio < 0.55 ? 'heat-mid' : ratio < 0.85 ? 'heat-high' : 'heat-top';
-          return `<td class="dmg ${cls}">${d.toLocaleString('ru')}</td>`;
-        }).join('');
-
-        return `<tr>
-          <td class="sticky-l">
-            <div class="player">
-              <div class="player-meta">
-                <span class="player-name">${r.name}</span>
-                <span class="player-battles">${r.played} из ${battles.length} боёв</span>
-              </div>
-            </div>
-          </td>
-          ${dmgCells}
-          <td class="sticky-r">
-            <span class="avg-val">${r.avg.toLocaleString('ru')}</span>
-            <span class="avg-sub">${r.played} боёв</span>
-          </td>
-        </tr>`;
-      }).join('');
+      tableBody.innerHTML = `<tr class="empty-row"><td colspan="${battles.length + 2}">Нет данных</td></tr>`;
+      return;
     }
 
-    tableMetaText.innerHTML = `<strong>Team damage matrix</strong> &nbsp;·&nbsp; ${filtered.length} игроков × ${battles.length} боёв · сортировка по ср. урону`;
+    tableBody.innerHTML = filtered.map(r => {
+      let cells = '';
+
+      if (curMetric === 'damage') {
+        const colMax = battles.map((_, bi) => Math.max(...rows.map(row => row.stats.damage[bi] ?? 0), 1));
+        cells = r.stats.damage.map((d, bi) => {
+          if (d === null) return `<td class="heat-none">—</td>`;
+          return `<td class="dmg ${heatClass(d, colMax[bi])}">${d.toLocaleString('ru')}</td>`;
+        }).join('');
+
+      } else if (curMetric === 'assists') {
+        const colMax = battles.map((_, bi) => Math.max(...rows.map(row => row.stats.assists[bi] ?? 0), 1));
+        cells = r.stats.assists.map((v, bi) => {
+          if (v === null) return `<td class="heat-none">—</td>`;
+          return `<td class="dmg ${heatClass(v, colMax[bi])}">${v.toLocaleString('ru')}</td>`;
+        }).join('');
+
+      } else if (curMetric === 'combo') {
+        const colMax = battles.map((_, bi) => Math.max(...rows.map(row => row.stats.blocked[bi] ?? 0), 1));
+        cells = r.stats.blocked.map((bl, bi) => {
+          const rc = r.stats.received[bi];
+          if (bl === null) return `<td class="heat-none">—</td>`;
+          const cls = heatClass(bl, colMax[bi]);
+          return `<td class="cell-combo ${cls}">
+            <span class="combo-top">${bl.toLocaleString('ru')}</span>
+            <span class="combo-bot">${(rc ?? 0).toLocaleString('ru')}</span>
+          </td>`;
+        }).join('');
+
+      } else {
+        cells = r.stats.frags.map(f => {
+          if (f === null) return `<td class="heat-none">—</td>`;
+          const cls = f === 0 ? 'frag-0' : f === 1 ? 'frag-1' : f === 2 ? 'frag-2' : f === 3 ? 'frag-3' : 'frag-4';
+          return `<td class="${cls}">${f}</td>`;
+        }).join('');
+      }
+
+      let avgCell = '';
+      if (curMetric === 'combo') {
+        avgCell = `<td class="sticky-r">
+          <span class="avg-val">${r.avgBlocked.toLocaleString('ru')}</span>
+          <span class="avg-sub">${r.avgReceived.toLocaleString('ru')} пол.</span>
+        </td>`;
+      } else {
+        const val = r[sortKey];
+        const fmt = curMetric === 'frags'
+          ? (Math.round(val * 10) / 10).toLocaleString('ru')
+          : val.toLocaleString('ru');
+        avgCell = `<td class="sticky-r">
+          <span class="avg-val">${fmt}</span>
+          <span class="avg-sub">${r.played} боёв</span>
+        </td>`;
+      }
+
+      return `<tr>
+        <td class="sticky-l">
+          <div class="player">
+            <div class="player-meta">
+              <span class="player-name">${r.name}</span>
+              <span class="player-battles">${r.played} из ${battles.length} боёв</span>
+            </div>
+          </div>
+        </td>
+        ${cells}
+        ${avgCell}
+      </tr>`;
+    }).join('');
+
+    tableMetaText.innerHTML = `<strong>${meta.label}</strong> &nbsp;·&nbsp; ${filtered.length} игроков × ${battles.length} боёв`;
   }
 </script>
 </body>

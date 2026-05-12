@@ -32,6 +32,8 @@ def battle_to_dict(b: BattleResult) -> dict:
                 "team": p.team,
                 "damage_dealt": p.damage_dealt,
                 "damage_received": p.damage_received,
+                "blocked": p.blocked,
+                "assists": p.assists,
                 "frags": p.frags,
                 "xp": p.xp,
                 "survived": p.survived,
