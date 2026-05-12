@@ -74,7 +74,7 @@ def parse_replay(path: str | Path) -> BattleResult:
 
     meta: dict = json.loads(block1_raw.decode("utf-8", errors="replace"))
 
-    map_name: str = meta.get("mapDisplayName") or meta.get("mapName", "Unknown")
+    map_name: str = meta.get("mapName") or meta.get("mapDisplayName") or "Unknown"
     date_time: str = meta.get("dateTime", "")
     player_name: str = meta.get("playerName", "")
 
