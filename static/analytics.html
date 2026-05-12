@@ -141,12 +141,6 @@
     return 'heat-top';
   }
 
-  async function load() {
-    const res  = await fetch('/api/analytics/summary');
-    const data = await res.json();
-    render(data);
-  }
-
   function render({ totals, players, maps, vehicles }) {
     const total = Number(totals.total_battles ?? 0);
     const wins  = Number(totals.wins  ?? 0);
@@ -350,6 +344,19 @@
         <tbody>${rows}</tbody>
       </table></div>
     </div>`;
+  }
+
+  async function load() {
+    const res  = await fetch('/api/analytics/summary');
+    const data = await res.json();
+    if (data.error) {
+      const msg = data.error === 'database_unavailable'
+        ? 'База данных недоступна. Добавь PostgreSQL плагин в Railway и перезапусти сервис.'
+        : data.error;
+      document.getElementById('content').innerHTML = `<div class="empty-state"><strong>Ошибка</strong>${msg}</div>`;
+      return;
+    }
+    render(data);
   }
 
   load().catch(err => {

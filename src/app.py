@@ -5,8 +5,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fastapi import FastAPI, UploadFile, File
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 import tempfile
+import traceback
 
 from replay_parser import parse_replay, BattleResult
 from database import init_db, save_battle, get_player_summary, get_map_summary, get_vehicle_summary, get_db_totals
@@ -25,7 +26,8 @@ def startup():
     try:
         init_db()
         _DB_AVAILABLE = True
-    except Exception:
+    except Exception as e:
+        print(f"[DB] init failed: {e}")
         _DB_AVAILABLE = False
 
 
@@ -97,9 +99,15 @@ async def upload_replays(files: list[UploadFile] = File(...)):
 
 @app.get("/api/analytics/summary")
 def analytics_summary():
-    return {
-        "totals":   get_db_totals(),
-        "players":  get_player_summary(),
-        "maps":     get_map_summary(),
-        "vehicles": get_vehicle_summary(),
-    }
+    if not _DB_AVAILABLE:
+        return JSONResponse({"error": "database_unavailable"}, status_code=503)
+    try:
+        return {
+            "totals":   get_db_totals(),
+            "players":  get_player_summary(),
+            "maps":     get_map_summary(),
+            "vehicles": get_vehicle_summary(),
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
