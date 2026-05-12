@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>StatsBattle — Аналитика</title>
+<meta name="viewport" content="width=1440" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0d1117; --bg-elev: #010409; --surface: #161b22; --surface-2: #1c232c;
+    --surface-3: #21262d; --border: #30363d; --border-muted: #21262d;
+    --text: #e6edf3; --text-muted: #7d8590; --text-dim: #484f58;
+    --win: #3fb950; --win-bg: rgba(63,185,80,0.12); --win-border: rgba(63,185,80,0.35);
+    --loss: #f85149; --loss-bg: rgba(248,81,73,0.12); --loss-border: rgba(248,81,73,0.35);
+    --draw: #8b949e; --gold: #e3b341; --gold-surface: #1d2025; --gold-surface-head: #23262b;
+    --accent: #1f6feb; --accent-hover: #388bfd;
+    --heat-low: #6e7681; --heat-mid: #e6edf3; --heat-high: #58a6ff; --heat-top: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+
+  .page { max-width: 1440px; margin: 0 auto; padding: 24px 28px 64px; }
+
+  /* nav */
+  .nav {
+    display: flex; align-items: center; gap: 4px;
+    padding: 6px 0 20px; border-bottom: 1px solid var(--border-muted); margin-bottom: 24px;
+  }
+  .nav-brand { font-size: 18px; font-weight: 700; margin-right: 20px; }
+  .nav-brand .accent { color: var(--accent); }
+  .nav-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500;
+    color: var(--text-muted); text-decoration: none; transition: color 0.1s, background 0.1s;
+  }
+  .nav-link:hover { color: var(--text); background: var(--surface-3); }
+  .nav-link.active { color: var(--text); background: var(--surface-2); border: 1px solid var(--border); }
+
+  /* summary cards */
+  .summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px; padding: 16px 18px; }
+  .stat-card .label { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; display: flex; align-items: center; gap: 6px; }
+  .stat-card .value { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin-top: 4px; line-height: 1.1; }
+  .stat-card .delta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .stat-card .delta strong { color: var(--text); font-weight: 500; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.win  { background: var(--win);  box-shadow: 0 0 6px rgba(63,185,80,0.6); }
+  .dot.loss { background: var(--loss); box-shadow: 0 0 6px rgba(248,81,73,0.6); }
+  .dot.neutral { background: var(--accent); box-shadow: 0 0 6px rgba(31,111,235,0.6); }
+  .bar { height: 4px; background: var(--surface-3); border-radius: 2px; margin-top: 12px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; }
+  .bar-win  > span { background: var(--win); }
+  .bar-loss > span { background: var(--loss); }
+
+  /* sections */
+  .section-title { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 12px; }
+
+  /* table card */
+  .table-card { background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }
+  .table-meta { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border-muted); font-size: 12.5px; color: var(--text-muted); }
+  .table-meta strong { color: var(--text); font-weight: 600; }
+  .table-scroll { overflow-x: auto; scrollbar-color: var(--surface-3) var(--surface); }
+  .table-scroll::-webkit-scrollbar { height: 10px; }
+  .table-scroll::-webkit-scrollbar-track { background: var(--surface); }
+  .table-scroll::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 5px; border: 2px solid var(--surface); }
+
+  table.stats { border-collapse: separate; border-spacing: 0; width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  table.stats thead th { background: var(--surface-2); color: var(--text-muted); font-weight: 500; text-align: center; padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; font-size: 11px; }
+  table.stats tbody td { padding: 0 12px; height: 42px; text-align: center; border-bottom: 1px solid var(--border-muted); color: var(--text); white-space: nowrap; }
+  table.stats tbody tr:hover td { background: rgba(177,186,196,0.04); }
+  table.stats tbody tr:hover td.sticky-l { background: #1b212b; }
+  table.stats tbody tr:last-child td { border-bottom: 0; }
+
+  th.sticky-l, td.sticky-l { position: sticky; left: 0; z-index: 3; text-align: left; padding: 0 16px; min-width: 180px; border-right: 1px solid var(--border); background: var(--surface); font-family: 'Inter', sans-serif; }
+  th.sticky-l { background: var(--surface-2); z-index: 4; }
+
+  .player-name { color: var(--text); font-weight: 500; font-size: 13px; }
+  .player-sub  { color: var(--text-muted); font-size: 10.5px; margin-top: 1px; font-family: 'JetBrains Mono', monospace; }
+
+  .heat-none { color: var(--text-dim); }
+  .heat-low  { color: var(--heat-low); }
+  .heat-mid  { color: var(--heat-mid); }
+  .heat-high { color: var(--heat-high); font-weight: 600; }
+  .heat-top  { color: var(--heat-top); font-weight: 700; background: rgba(63,185,80,0.06); }
+
+  .win-badge  { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; background: var(--win-bg); color: var(--win); border: 1px solid var(--win-border); }
+  .loss-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; background: var(--loss-bg); color: var(--loss); border: 1px solid var(--loss-border); }
+  .winrate-bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; margin-top: 4px; gap: 1px; }
+  .winrate-bar .w { background: var(--win); }
+  .winrate-bar .l { background: var(--loss); }
+  .winrate-bar .d { background: var(--draw); }
+
+  /* vehicle table */
+  .vehicle-name { font-size: 11.5px; color: var(--text-muted); }
+
+  /* win/loss delta */
+  td.delta-pos { color: var(--win); font-weight: 600; }
+  td.delta-neg { color: var(--loss); font-weight: 600; }
+  td.delta-neu { color: var(--text-muted); }
+
+  /* loading/empty */
+  .empty-state { text-align: center; padding: 48px 24px; color: var(--text-muted); font-size: 13px; }
+  .empty-state strong { display: block; color: var(--text); font-size: 16px; margin-bottom: 8px; }
+  .spinner-wrap { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 48px; color: var(--text-muted); }
+  .spinner { width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid var(--surface-3); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <nav class="nav">
+    <div class="nav-brand">Stats<span class="accent">Battle</span></div>
+    <a href="/" class="nav-link">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Быстрый чек
+    </a>
+    <a href="/analytics" class="nav-link active">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Аналитика
+    </a>
+  </nav>
+
+  <div id="content">
+    <div class="spinner-wrap"><div class="spinner"></div> Загружаем данные…</div>
+  </div>
+
+</div>
+<script>
+  const fmt = v => v == null ? '—' : Number(v).toLocaleString('ru');
+  const fmtF = v => v == null ? '—' : Number(v).toLocaleString('ru', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+  function heatClass(val, max) {
+    if (!val) return 'heat-none';
+    const r = val / max;
+    if (r < 0.25) return 'heat-low';
+    if (r < 0.55) return 'heat-mid';
+    if (r < 0.85) return 'heat-high';
+    return 'heat-top';
+  }
+
+  async function load() {
+    const res  = await fetch('/api/analytics/summary');
+    const data = await res.json();
+    render(data);
+  }
+
+  function render({ totals, players, maps, vehicles }) {
+    const total = Number(totals.total_battles ?? 0);
+    const wins  = Number(totals.wins  ?? 0);
+    const losses= Number(totals.losses ?? 0);
+    const draws = Number(totals.draws  ?? 0);
+    const wr    = total ? Math.round(wins / total * 100) : 0;
+    const lr    = total ? Math.round(losses / total * 100) : 0;
+
+    document.getElementById('content').innerHTML = `
+      ${total === 0 ? renderEmpty() : ''}
+      ${renderSummary(total, wins, losses, draws, wr, lr, totals)}
+      ${renderPlayers(players)}
+      ${renderVehicles(vehicles)}
+      ${renderMaps(maps)}
+    `;
+  }
+
+  function renderEmpty() {
+    return `<div class="empty-state">
+      <strong>Нет данных</strong>
+      Загрузи реплеи через <a href="/" style="color:var(--accent)">Быстрый чек</a> — они автоматически сохранятся в базу.
+    </div>`;
+  }
+
+  function renderSummary(total, wins, losses, draws, wr, lr, totals) {
+    if (!total) return '';
+    return `<div class="summary">
+      <div class="stat-card">
+        <div class="label"><span class="dot neutral"></span> Боёв в базе</div>
+        <div class="value">${total}</div>
+        <div class="delta">${totals.first_battle ? totals.first_battle.slice(0,10) + ' — ' + totals.last_battle.slice(0,10) : ''}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label"><span class="dot win"></span> Победы</div>
+        <div class="value" style="color:var(--win)">${wins}</div>
+        <div class="delta"><strong>${wr}%</strong> побед</div>
+        <div class="bar bar-win"><span style="width:${wr}%"></span></div>
+      </div>
+      <div class="stat-card">
+        <div class="label"><span class="dot loss"></span> Поражения</div>
+        <div class="value" style="color:var(--loss)">${losses}</div>
+        <div class="delta"><strong>${lr}%</strong> поражений</div>
+        <div class="bar bar-loss"><span style="width:${lr}%"></span></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Ничьи</div>
+        <div class="value" style="color:var(--draw)">${draws}</div>
+        <div class="delta">${total ? Math.round(draws/total*100) : 0}%</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Игроков</div>
+        <div class="value">${document._playerCount ?? '—'}</div>
+        <div class="delta">уникальных</div>
+      </div>
+    </div>`;
+  }
+
+  function renderPlayers(players) {
+    if (!players.length) return '';
+    document._playerCount = players.length;
+
+    const maxDmg = Math.max(...players.map(p => Number(p.avg_damage)), 1);
+    const maxAst = Math.max(...players.map(p => Number(p.avg_assists)), 1);
+    const maxBlk = Math.max(...players.map(p => Number(p.avg_blocked)), 1);
+
+    const rows = players.map(p => {
+      const battles = Number(p.battles);
+      const wins    = Number(p.wins);
+      const losses  = Number(p.losses);
+      const wr      = battles ? Math.round(wins / battles * 100) : 0;
+      const dmgDiff = (Number(p.avg_dmg_win) || 0) - (Number(p.avg_dmg_loss) || 0);
+      const diffCls = dmgDiff > 100 ? 'delta-pos' : dmgDiff < -100 ? 'delta-neg' : 'delta-neu';
+      const diffStr = dmgDiff > 0 ? '+' + fmt(dmgDiff) : fmt(dmgDiff);
+
+      return `<tr>
+        <td class="sticky-l">
+          <div class="player-name">${p.name}</div>
+          <div class="player-sub">${battles} боёв · WR ${wr}%</div>
+          <div class="winrate-bar">
+            <span class="w" style="flex:${wins}"></span>
+            <span class="l" style="flex:${losses}"></span>
+            <span class="d" style="flex:${Number(p.draws)}"></span>
+          </div>
+        </td>
+        <td class="${heatClass(Number(p.avg_damage),  maxDmg)}">${fmt(p.avg_damage)}</td>
+        <td class="${heatClass(Number(p.avg_assists), maxAst)}">${fmt(p.avg_assists)}</td>
+        <td class="${heatClass(Number(p.avg_blocked), maxBlk)}">${fmt(p.avg_blocked)}</td>
+        <td>${fmt(p.avg_received)}</td>
+        <td>${fmtF(p.avg_frags)}</td>
+        <td class="${diffCls}">${diffStr}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="table-card">
+      <div class="table-meta">
+        <strong>Игроки</strong> &nbsp;·&nbsp; ${players.length} уникальных · сортировка по ср. урону
+        <span style="font-size:11px">Δ урон = победы − поражения</span>
+      </div>
+      <div class="table-scroll"><table class="stats">
+        <thead><tr>
+          <th class="sticky-l">Игрок</th>
+          <th>Ср. урон</th>
+          <th>Ср. ассист</th>
+          <th>Ср. заблок</th>
+          <th>Ср. получен</th>
+          <th>Ср. фраги</th>
+          <th>Δ урон win/loss</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  function renderVehicles(vehicles) {
+    if (!vehicles.length) return '';
+
+    const grouped = {};
+    vehicles.forEach(v => {
+      if (!grouped[v.name]) grouped[v.name] = [];
+      grouped[v.name].push(v);
+    });
+
+    const maxDmg = Math.max(...vehicles.map(v => Number(v.avg_damage)), 1);
+
+    const rows = Object.entries(grouped).map(([name, tanks]) =>
+      tanks.map((v, i) => {
+        const wr = Number(v.battles) ? Math.round(Number(v.wins) / Number(v.battles) * 100) : 0;
+        return `<tr>
+          ${i === 0 ? `<td class="sticky-l" rowspan="${tanks.length}">
+            <div class="player-name">${name}</div>
+          </td>` : ''}
+          <td style="text-align:left; padding-left:12px"><span class="vehicle-name">${v.vehicle}</span></td>
+          <td>${v.battles}</td>
+          <td class="${heatClass(Number(v.avg_damage), maxDmg)}">${fmt(v.avg_damage)}</td>
+          <td>${fmt(v.avg_assists)}</td>
+          <td>${fmtF(v.avg_frags)}</td>
+          <td>${wr}%</td>
+        </tr>`;
+      }).join('')
+    ).join('');
+
+    return `<div class="table-card">
+      <div class="table-meta"><strong>Игрок × Танк</strong></div>
+      <div class="table-scroll"><table class="stats">
+        <thead><tr>
+          <th class="sticky-l">Игрок</th>
+          <th style="text-align:left; padding-left:12px">Танк</th>
+          <th>Боёв</th>
+          <th>Ср. урон</th>
+          <th>Ср. ассист</th>
+          <th>Ср. фраги</th>
+          <th>WR%</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  function renderMaps(maps) {
+    if (!maps.length) return '';
+
+    const maxBattles = Math.max(...maps.map(m => Number(m.battles)), 1);
+
+    const rows = maps.map(m => {
+      const battles = Number(m.battles);
+      const wins    = Number(m.wins);
+      const losses  = Number(m.losses);
+      const draws   = Number(m.draws);
+      const wr      = Number(m.winrate);
+      const wrCls   = wr >= 55 ? 'delta-pos' : wr <= 40 ? 'delta-neg' : '';
+
+      return `<tr>
+        <td class="sticky-l"><div class="player-name">${m.map_name}</div></td>
+        <td>${battles}</td>
+        <td><span class="win-badge">${wins}W</span></td>
+        <td><span class="loss-badge">${losses}L</span></td>
+        <td>${draws}</td>
+        <td class="${wrCls}">${wr}%</td>
+        <td style="min-width:120px; padding: 8px 12px;">
+          <div class="winrate-bar">
+            <span class="w" style="flex:${wins}"></span>
+            <span class="l" style="flex:${losses}"></span>
+            <span class="d" style="flex:${draws}"></span>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="table-card">
+      <div class="table-meta"><strong>Карты</strong> &nbsp;·&nbsp; ${maps.length} карт · сортировка по количеству боёв</div>
+      <div class="table-scroll"><table class="stats">
+        <thead><tr>
+          <th class="sticky-l">Карта</th>
+          <th>Боёв</th>
+          <th>Победы</th>
+          <th>Поражения</th>
+          <th>Ничьи</th>
+          <th>WR%</th>
+          <th style="min-width:120px">W / L / D</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  load().catch(err => {
+    document.getElementById('content').innerHTML = `<div class="empty-state">
+      <strong>Ошибка загрузки</strong>${err.message}
+    </div>`;
+  });
+</script>
+</body>
+</html>

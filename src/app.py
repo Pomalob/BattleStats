@@ -3,18 +3,30 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import tempfile
-import asyncio
 
 from replay_parser import parse_replay, BattleResult
+from database import init_db, save_battle, get_player_summary, get_map_summary, get_vehicle_summary, get_db_totals
 
 app = FastAPI(title="StatsBattle")
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+_DB_AVAILABLE = False
+
+
+@app.on_event("startup")
+def startup():
+    global _DB_AVAILABLE
+    try:
+        init_db()
+        _DB_AVAILABLE = True
+    except Exception:
+        _DB_AVAILABLE = False
 
 
 def battle_to_dict(b: BattleResult) -> dict:
@@ -48,9 +60,13 @@ def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
 
 
+@app.get("/analytics")
+def analytics():
+    return FileResponse(str(STATIC_DIR / "analytics.html"))
+
+
 @app.post("/api/upload")
 async def upload_replays(files: list[UploadFile] = File(...)):
-
     results = []
     errors = []
 
@@ -68,10 +84,22 @@ async def upload_replays(files: list[UploadFile] = File(...)):
 
             try:
                 battle = parse_replay(dest)
-                results.append(battle_to_dict(battle))
+                d = battle_to_dict(battle)
+                results.append(d)
+                if _DB_AVAILABLE:
+                    save_battle(d)
             except Exception as e:
                 errors.append({"file": upload.filename, "error": str(e)})
 
     results.sort(key=lambda r: r["date_time"], reverse=True)
-
     return {"battles": results, "errors": errors}
+
+
+@app.get("/api/analytics/summary")
+def analytics_summary():
+    return {
+        "totals":   get_db_totals(),
+        "players":  get_player_summary(),
+        "maps":     get_map_summary(),
+        "vehicles": get_vehicle_summary(),
+    }
