@@ -540,11 +540,11 @@
           });
         }
         const s = playerMap.get(p.name);
-        s.damage[bi]   = p.damage_dealt;
-        s.assists[bi]  = p.assists;
-        s.blocked[bi]  = p.blocked;
-        s.received[bi] = p.damage_received;
-        s.frags[bi]    = p.frags;
+        s.damage[bi]   = p.damage_dealt   ?? null;
+        s.assists[bi]  = p.assists        ?? null;
+        s.blocked[bi]  = p.blocked        ?? null;
+        s.received[bi] = p.damage_received ?? null;
+        s.frags[bi]    = p.frags          ?? null;
       });
     });
 
@@ -662,7 +662,7 @@
 
       } else if (metric === 'combo') {
         cells = r.stats.blocked.map((bl, bi) => {
-          if (bl === null) return `<td class="heat-none">—</td>`;
+          if (bl == null) return `<td class="heat-none">—</td>`;
           const rc = r.stats.received[bi];
           return `<td class="cell-combo ${heatClass(bl, colMax[bi])}">
             <span class="combo-top">${bl.toLocaleString('ru')}</span>
