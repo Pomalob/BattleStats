@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>StatsBattle — Мир Танков</title>
+<meta name="viewport" content="width=1440" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-elev: #010409;
+    --surface: #161b22;
+    --surface-2: #1c232c;
+    --surface-3: #21262d;
+    --border: #30363d;
+    --border-muted: #21262d;
+    --text: #e6edf3;
+    --text-muted: #7d8590;
+    --text-dim: #484f58;
+    --win: #3fb950;
+    --win-bg: rgba(63, 185, 80, 0.12);
+    --win-border: rgba(63, 185, 80, 0.35);
+    --loss: #f85149;
+    --loss-bg: rgba(248, 81, 73, 0.12);
+    --loss-border: rgba(248, 81, 73, 0.35);
+    --draw: #8b949e;
+    --draw-bg: rgba(139, 148, 158, 0.12);
+    --gold: #e3b341;
+    --gold-surface: #1d2025;
+    --gold-surface-hover: #232529;
+    --gold-surface-head: #23262b;
+    --accent: #1f6feb;
+    --accent-hover: #388bfd;
+    --heat-low: #6e7681;
+    --heat-mid: #e6edf3;
+    --heat-high: #58a6ff;
+    --heat-top: #3fb950;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+  .page { max-width: 1440px; margin: 0 auto; padding: 24px 28px 64px; }
+
+  /* header */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0 20px; border-bottom: 1px solid var(--border-muted); margin-bottom: 24px;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand-mark {
+    width: 40px; height: 40px; border-radius: 8px;
+    background: linear-gradient(135deg, #1f6feb 0%, #0d3a8e 100%);
+    display: grid; place-items: center;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset, 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+  .brand-title { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .brand-title .accent { color: var(--accent); }
+  .brand-sub { font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase; margin-top: 3px; }
+  .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
+  .session-pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px;
+    border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+    color: var(--text); font-size: 12px;
+  }
+  .session-pill::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--win); box-shadow: 0 0 8px var(--win);
+  }
+  .session-pill.idle::before { background: var(--text-dim); box-shadow: none; }
+
+  /* drop zone */
+  .dropzone {
+    border: 1.5px dashed var(--border);
+    background: radial-gradient(800px 200px at 50% -40%, rgba(31,111,235,0.08), transparent 60%), var(--surface);
+    border-radius: 12px; padding: 28px 24px;
+    display: flex; align-items: center; gap: 24px; margin-bottom: 24px;
+    transition: border-color 0.15s; cursor: pointer;
+  }
+  .dropzone:hover, .dropzone.dragover { border-color: var(--accent); }
+  .dropzone-icon {
+    width: 56px; height: 56px; border-radius: 12px;
+    background: var(--surface-3); border: 1px solid var(--border);
+    display: grid; place-items: center; color: var(--accent); flex-shrink: 0;
+  }
+  .dropzone-body { flex: 1; min-width: 0; }
+  .dropzone-title { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .dropzone-sub { font-size: 13px; color: var(--text-muted); margin: 0; }
+  .dropzone-sub code {
+    font-family: 'JetBrains Mono', monospace; background: var(--surface-3);
+    border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px;
+    font-size: 11.5px; color: var(--text);
+  }
+  .dropzone-actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
+  .btn-primary {
+    background: var(--accent); border: 1px solid rgba(255,255,255,0.08); color: #fff;
+    font-size: 13px; font-weight: 500; padding: 8px 16px; border-radius: 6px; cursor: pointer;
+    box-shadow: 0 0 0 1px rgba(31,111,235,0.4) inset; font-family: inherit;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  #file-input { display: none; }
+
+  /* summary */
+  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border-muted);
+    border-radius: 10px; padding: 16px 18px;
+  }
+  .stat-card .label {
+    font-size: 11.5px; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: 0.06em; font-weight: 500; display: flex; align-items: center; gap: 6px;
+  }
+  .stat-card .value {
+    font-size: 30px; font-weight: 700; letter-spacing: -0.02em;
+    margin-top: 4px; line-height: 1.1; font-variant-numeric: tabular-nums;
+  }
+  .stat-card .delta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+  .stat-card .delta strong { color: var(--text); font-weight: 500; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.win  { background: var(--win);  box-shadow: 0 0 6px rgba(63,185,80,0.6); }
+  .dot.loss { background: var(--loss); box-shadow: 0 0 6px rgba(248,81,73,0.6); }
+  .dot.draw { background: var(--draw); }
+  .dot.neutral { background: var(--accent); box-shadow: 0 0 6px rgba(31,111,235,0.6); }
+  .stat-card .bar { height: 4px; background: var(--surface-3); border-radius: 2px; margin-top: 12px; overflow: hidden; }
+  .stat-card .bar > span { display: block; height: 100%; }
+  .bar-win  > span { background: var(--win); }
+  .bar-loss > span { background: var(--loss); }
+  .bar-draw > span { background: var(--draw); }
+
+  /* controls */
+  .controls {
+    background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px;
+    padding: 14px 18px; display: flex; align-items: center; gap: 28px; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .ctl-group { display: flex; flex-direction: column; gap: 6px; }
+  .ctl-label {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+    font-size: 11.5px; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: 0.06em; font-weight: 500;
+  }
+  .ctl-value {
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0;
+  }
+  .ctl-value .muted { color: var(--text-muted); }
+  .slider-wrap { width: 280px; display: flex; align-items: center; gap: 10px; }
+  .slider {
+    -webkit-appearance: none; appearance: none; flex: 1; height: 6px; border-radius: 3px;
+    background: linear-gradient(to right, var(--accent) 0%, var(--accent) 0%, var(--surface-3) 0%, var(--surface-3) 100%);
+    outline: none; cursor: pointer;
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; border: 3px solid var(--accent); cursor: grab; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  }
+  .slider::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; border: 3px solid var(--accent); cursor: grab;
+  }
+  .slider-tick { font-size: 10.5px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
+  .select-wrap { position: relative; }
+  .select {
+    appearance: none; -webkit-appearance: none; background: var(--surface-3);
+    border: 1px solid var(--border); color: var(--text); padding: 7px 32px 7px 12px;
+    border-radius: 6px; font-size: 13px; font-family: inherit; cursor: pointer; min-width: 220px;
+  }
+  .select:hover { border-color: #444c56; }
+  .select-wrap::after {
+    content: ""; position: absolute; right: 10px; top: 50%; width: 8px; height: 8px;
+    border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted);
+    transform: translateY(-70%) rotate(45deg); pointer-events: none;
+  }
+  .controls-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .btn-secondary {
+    background: var(--surface-3); border: 1px solid var(--border); color: var(--text);
+    font-size: 13px; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-family: inherit;
+  }
+  .btn-secondary:hover { background: #2d333b; border-color: #444c56; }
+
+  /* alerts */
+  .alerts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .alert {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: rgba(248,81,73,0.08); border: 1px solid var(--loss-border);
+    border-radius: 8px; padding: 12px 16px; font-size: 13px;
+  }
+  .alert-icon { color: var(--loss); flex-shrink: 0; margin-top: 1px; }
+  .alert-body { flex: 1; }
+  .alert-title { font-weight: 600; color: var(--loss); margin-bottom: 2px; }
+  .alert-text { color: var(--text); }
+  .alert-text code {
+    font-family: 'JetBrains Mono', monospace; background: rgba(0,0,0,0.3);
+    padding: 0 4px; border-radius: 3px; font-size: 12px;
+  }
+  .alert-dismiss {
+    background: transparent; border: 0; color: var(--text-muted);
+    cursor: pointer; padding: 0 4px; font-size: 18px; line-height: 1;
+  }
+  .alert-dismiss:hover { color: var(--text); }
+
+  /* table */
+  .table-card {
+    background: var(--surface); border: 1px solid var(--border-muted);
+    border-radius: 10px; overflow: hidden;
+  }
+  .table-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px; border-bottom: 1px solid var(--border-muted);
+    font-size: 12.5px; color: var(--text-muted);
+  }
+  .table-meta strong { color: var(--text); font-weight: 600; }
+  .legend { display: flex; align-items: center; gap: 14px; font-size: 11.5px; }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; }
+  .swatch-low  { background: var(--heat-low); }
+  .swatch-mid  { background: var(--heat-mid); }
+  .swatch-high { background: var(--heat-high); }
+  .swatch-top  { background: var(--heat-top); }
+  .table-scroll {
+    overflow-x: auto; overflow-y: visible;
+    scrollbar-color: var(--surface-3) var(--surface);
+  }
+  .table-scroll::-webkit-scrollbar { height: 10px; }
+  .table-scroll::-webkit-scrollbar-track { background: var(--surface); }
+  .table-scroll::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 5px; border: 2px solid var(--surface); }
+  .table-scroll::-webkit-scrollbar-thumb:hover { background: #3a414b; }
+
+  table.stats {
+    border-collapse: separate; border-spacing: 0; width: 100%;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12.5px; font-variant-numeric: tabular-nums;
+  }
+  table.stats thead th {
+    background: var(--surface-2); color: var(--text-muted); font-weight: 500;
+    text-align: center; padding: 0; border-bottom: 1px solid var(--border);
+    height: 64px; vertical-align: middle; white-space: nowrap; font-size: 11px;
+  }
+  table.stats tbody td {
+    padding: 0 8px; height: 40px; text-align: center;
+    border-bottom: 1px solid var(--border-muted); color: var(--text); white-space: nowrap;
+  }
+  table.stats tbody tr:hover td { background: rgba(177,186,196,0.04); }
+  table.stats tbody tr:hover td.sticky-l { background: #1b212b; }
+  table.stats tbody tr:hover td.sticky-r { background: #1f2128; }
+  table.stats tbody tr:last-child td { border-bottom: 0; }
+
+  th.sticky-l, td.sticky-l {
+    position: sticky; left: 0; z-index: 3; text-align: left; padding: 0 16px;
+    min-width: 200px; max-width: 200px; border-right: 1px solid var(--border);
+    background: var(--surface); font-family: 'Inter', sans-serif;
+  }
+  th.sticky-l { background: var(--surface-2); z-index: 4; }
+  th.sticky-r, td.sticky-r {
+    position: sticky; right: 0; z-index: 3; min-width: 120px; max-width: 120px;
+    border-left: 1px solid var(--border); background: var(--gold-surface);
+    color: var(--gold); font-weight: 600; font-size: 14px;
+  }
+  th.sticky-r { background: var(--gold-surface-head); color: var(--gold); z-index: 4; }
+  table.stats tbody tr:hover td.sticky-r { background: var(--gold-surface-hover); }
+
+  .player { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .player-avatar {
+    width: 28px; height: 28px; border-radius: 6px;
+    background: linear-gradient(135deg, #2d333b, #1c2129); border: 1px solid var(--border);
+    flex-shrink: 0; display: grid; place-items: center;
+    font-size: 10px; font-weight: 600; color: var(--text-muted); font-family: 'Inter', sans-serif;
+  }
+  .player-meta { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+  .player-name { color: var(--text); font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+  .player-battles { color: var(--text-muted); font-size: 10.5px; margin-top: 1px; font-family: 'JetBrains Mono', monospace; }
+
+  .b-head { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 10px; min-width: 80px; }
+  .b-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 28px; height: 18px; padding: 0 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.06em; font-family: 'JetBrains Mono', monospace;
+  }
+  .b-badge.win  { background: var(--win-bg);  color: var(--win);  border: 1px solid var(--win-border); }
+  .b-badge.loss { background: var(--loss-bg); color: var(--loss); border: 1px solid var(--loss-border); }
+  .b-badge.draw { background: var(--draw-bg); color: var(--draw); border: 1px solid rgba(139,148,158,0.35); }
+  .b-map { color: var(--text); font-size: 11px; font-weight: 500; font-family: 'Inter', sans-serif; }
+  .b-idx { color: var(--text-dim); font-size: 9.5px; font-family: 'JetBrains Mono', monospace; }
+
+  td.dmg { font-weight: 500; font-size: 13px; }
+  td.heat-none { color: var(--text-dim); font-size: 14px; }
+  td.heat-low  { color: var(--heat-low); }
+  td.heat-mid  { color: var(--heat-mid); }
+  td.heat-high { color: var(--heat-high); font-weight: 600; }
+  td.heat-top  { color: var(--heat-top); font-weight: 700; background: rgba(63,185,80,0.06); }
+
+  td.sticky-r .avg-val { font-size: 14px; }
+  td.sticky-r .avg-sub { display: block; color: var(--text-muted); font-size: 10px; font-weight: 400; font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
+
+  .empty-row td { text-align: center !important; padding: 32px !important; color: var(--text-muted); font-family: 'Inter', sans-serif; }
+
+  /* loading */
+  .spinner-card {
+    background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px;
+    padding: 32px; display: flex; align-items: center; justify-content: center;
+    gap: 16px; color: var(--text-muted); font-size: 13px; display: none;
+  }
+  .spinner-card.visible { display: flex; }
+  .spinner {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2.5px solid var(--surface-3); border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner-text strong { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="header">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="8" stroke="#fff" stroke-width="1.5" opacity="0.95"/>
+          <circle cx="12" cy="12" r="2" fill="#fff"/>
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title">Stats<span class="accent">Battle</span></div>
+        <div class="brand-sub">Мир Танков &nbsp;·&nbsp; Replay Analyzer</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="session-pill idle" id="session-pill">Нет данных</span>
+    </div>
+  </header>
+
+  <section class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+    <div class="dropzone-icon">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+    </div>
+    <div class="dropzone-body">
+      <p class="dropzone-title">Перетащи реплеи или нажми для выбора</p>
+      <p class="dropzone-sub">Файлы <code>.mtreplay</code> из папки реплеев Мир Танков. Можно загружать любое количество.</p>
+    </div>
+    <div class="dropzone-actions" onclick="event.stopPropagation()">
+      <button class="btn-primary" onclick="document.getElementById('file-input').click()">Выбрать файлы</button>
+    </div>
+    <input type="file" id="file-input" multiple accept=".mtreplay">
+  </section>
+
+  <div class="spinner-card" id="loading">
+    <div class="spinner"></div>
+    <div class="spinner-text">Парсим реплеи…</div>
+  </div>
+
+  <div id="main-content" style="display:none">
+    <div class="summary" id="summary"></div>
+
+
+    <div class="alerts" id="alerts"></div>
+
+    <div class="table-card">
+      <div class="table-meta">
+        <div id="table-meta-text"><strong>Team damage matrix</strong></div>
+      </div>
+      <div class="table-scroll">
+        <table class="stats" id="stats-table">
+          <thead id="table-head"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const dropzone   = document.getElementById('dropzone');
+  const fileInput  = document.getElementById('file-input');
+  const loading    = document.getElementById('loading');
+  const mainContent = document.getElementById('main-content');
+  const summaryEl  = document.getElementById('summary');
+  const alertsEl   = document.getElementById('alerts');
+  const sessionPill = document.getElementById('session-pill');
+  const tableMetaText = document.getElementById('table-meta-text');
+  const tableHead  = document.getElementById('table-head');
+  const tableBody  = document.getElementById('table-body');
+
+  let tableData = null;
+
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault(); dropzone.classList.remove('dragover');
+    uploadFiles(e.dataTransfer.files);
+  });
+  fileInput.addEventListener('change', () => uploadFiles(fileInput.files));
+
+  async function uploadFiles(files) {
+    if (!files.length) return;
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+
+    loading.classList.add('visible');
+    mainContent.style.display = 'none';
+    alertsEl.innerHTML = '';
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        showAlert(`Ошибка сервера ${res.status}`, data?.detail ?? JSON.stringify(data));
+        return;
+      }
+      renderAll(data);
+    } catch (e) {
+      showAlert('Ошибка соединения', e.message);
+    } finally {
+      loading.classList.remove('visible');
+    }
+  }
+
+  function showAlert(title, text) {
+    alertsEl.innerHTML = `
+      <div class="alert">
+        <div class="alert-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="alert-body"><div class="alert-title">${title}</div><div class="alert-text">${text}</div></div>
+        <button class="alert-dismiss" onclick="this.closest('.alert').remove()">×</button>
+      </div>`;
+    mainContent.style.display = 'block';
+  }
+
+  function renderAll({ battles = [], errors = [] }) {
+    if (errors.length) {
+      alertsEl.innerHTML = `
+        <div class="alert">
+          <div class="alert-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>
+            </svg>
+          </div>
+          <div class="alert-body">
+            <div class="alert-title">${errors.length} реплей не удалось разобрать</div>
+            <div class="alert-text">${errors.map(e => `<code>${e.file}</code> — ${e.error}`).join(' &middot; ')}</div>
+          </div>
+          <button class="alert-dismiss" onclick="this.closest('.alert').remove()">×</button>
+        </div>`;
+    }
+
+    if (!battles.length) { mainContent.style.display = 'block'; return; }
+
+    const wins   = battles.filter(b => b.result === 'win').length;
+    const losses = battles.filter(b => b.result === 'loss').length;
+    const draws  = battles.filter(b => b.result === 'draw').length;
+    const total  = battles.length;
+    const winPct   = Math.round(wins   / total * 100);
+    const lossPct  = Math.round(losses / total * 100);
+    const drawPct  = Math.round(draws  / total * 100);
+
+    sessionPill.textContent = `${total} реплей${total === 1 ? '' : total < 5 ? 'а' : 'ев'} загружено`;
+    sessionPill.classList.remove('idle');
+
+    summaryEl.innerHTML = `
+      <div class="stat-card">
+        <div class="label"><span class="dot neutral"></span> Боёв</div>
+        <div class="value">${total}</div>
+        <div class="delta">загружено реплеев</div>
+      </div>
+      <div class="stat-card">
+        <div class="label"><span class="dot win"></span> Победы</div>
+        <div class="value" style="color:var(--win)">${wins}</div>
+        <div class="delta"><strong>${winPct}%</strong> побед</div>
+        <div class="bar bar-win"><span style="width:${winPct}%"></span></div>
+      </div>
+      <div class="stat-card">
+        <div class="label"><span class="dot loss"></span> Поражения</div>
+        <div class="value" style="color:var(--loss)">${losses}</div>
+        <div class="delta"><strong>${lossPct}%</strong> поражений</div>
+        <div class="bar bar-loss"><span style="width:${lossPct}%"></span></div>
+      </div>
+      <div class="stat-card">
+        <div class="label"><span class="dot draw"></span> Ничьи</div>
+        <div class="value" style="color:var(--draw)">${draws}</div>
+        <div class="delta"><strong>${drawPct}%</strong> ничьих</div>
+        <div class="bar bar-draw"><span style="width:${drawPct}%"></span></div>
+      </div>`;
+
+    // Build matrix: player × battle, only player's team
+    const sortedBattles = [...battles].reverse(); // chronological order
+    const playerMap = new Map();
+
+    sortedBattles.forEach((b, bi) => {
+      b.players
+        .filter(p => p.team === b.player_team)
+        .forEach(p => {
+          if (!playerMap.has(p.name)) playerMap.set(p.name, new Array(sortedBattles.length).fill(null));
+          playerMap.get(p.name)[bi] = p.damage_dealt;
+        });
+    });
+
+    const rows = [];
+    playerMap.forEach((damages, name) => {
+      const played = damages.filter(d => d !== null);
+      const avg = played.length ? Math.round(played.reduce((s, d) => s + d, 0) / played.length) : 0;
+      rows.push({ name, damages, avg, played: played.length });
+    });
+
+    tableData = { battles: sortedBattles, rows };
+    mainContent.style.display = 'block';
+    applyFilterAndSort();
+  }
+
+  const resultLabel = { win: 'WIN', loss: 'LOSS', draw: 'DRAW' };
+
+  function applyFilterAndSort() {
+    if (!tableData) return;
+    const { battles, rows } = tableData;
+
+    const filtered = [...rows].sort((a, b) => b.avg - a.avg);
+
+    // Per-column max for heat colouring
+    const colMax = battles.map((_, bi) =>
+      Math.max(...rows.map(r => r.damages[bi] ?? 0), 1)
+    );
+
+    // Table header
+    const headCols = battles.map((b, bi) => `
+      <th>
+        <div class="b-head">
+          <span class="b-badge ${b.result || 'draw'}">${resultLabel[b.result] ?? '?'}</span>
+          <span class="b-map" title="${b.map_name}">${b.map_name.length > 10 ? b.map_name.slice(0, 9) + '…' : b.map_name}</span>
+          <span class="b-idx">#${String(bi + 1).padStart(2, '0')}</span>
+        </div>
+      </th>`).join('');
+
+    tableHead.innerHTML = `<tr>
+      <th class="sticky-l">Игрок</th>
+      ${headCols}
+      <th class="sticky-r">Ср. урон ↓</th>
+    </tr>`;
+
+    // Table body
+    if (!filtered.length) {
+      tableBody.innerHTML = `<tr class="empty-row"><td colspan="${battles.length + 2}">Нет игроков с таким уровнем урона</td></tr>`;
+    } else {
+      tableBody.innerHTML = filtered.map(r => {
+        const dmgCells = r.damages.map((d, bi) => {
+          if (d === null) return `<td class="heat-none">—</td>`;
+          const ratio = d / colMax[bi];
+          const cls = d === 0 ? 'heat-none' : ratio < 0.25 ? 'heat-low' : ratio < 0.55 ? 'heat-mid' : ratio < 0.85 ? 'heat-high' : 'heat-top';
+          return `<td class="dmg ${cls}">${d.toLocaleString('ru')}</td>`;
+        }).join('');
+
+        return `<tr>
+          <td class="sticky-l">
+            <div class="player">
+              <div class="player-meta">
+                <span class="player-name">${r.name}</span>
+                <span class="player-battles">${r.played} из ${battles.length} боёв</span>
+              </div>
+            </div>
+          </td>
+          ${dmgCells}
+          <td class="sticky-r">
+            <span class="avg-val">${r.avg.toLocaleString('ru')}</span>
+            <span class="avg-sub">${r.played} боёв</span>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    tableMetaText.innerHTML = `<strong>Team damage matrix</strong> &nbsp;·&nbsp; ${filtered.length} игроков × ${battles.length} боёв · сортировка по ср. урону`;
+  }
+</script>
+</body>
+</html>
