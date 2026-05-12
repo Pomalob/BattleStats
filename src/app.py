@@ -61,6 +61,7 @@ def battle_to_dict(b) -> dict:
         "filename": b.filename,
         "map_name": b.map_name,
         "date_time": b.date_time,
+        "battle_hash": b.battle_hash,
         "result": b.result,
         "winner_team": b.winner_team,
         "player_team": b.player_team,

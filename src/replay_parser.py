@@ -1,6 +1,7 @@
 import re
 import struct
 import json
+import hashlib
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -27,6 +28,7 @@ class BattleResult:
     filename: str
     map_name: str
     date_time: str
+    battle_hash: str
     winner_team: int
     player_team: int
     player_vehicle: str
@@ -61,6 +63,12 @@ def _vehicle_name(raw: str) -> str:
     name = raw.split(":")[-1]
     name = re.sub(r'^[A-Za-z]+\d+_', '', name)  # strip nation prefix: R231_, G100_, Ch45_, etc.
     return name.replace("_", " ")
+
+
+def _make_battle_hash(player_names: list[str]) -> str:
+    """Stable hash of sorted player names — identical for all replays of the same battle."""
+    key = ",".join(sorted(player_names))
+    return hashlib.md5(key.encode()).hexdigest()
 
 
 def parse_replay(path: str | Path) -> BattleResult:
@@ -108,10 +116,12 @@ def parse_replay(path: str | Path) -> BattleResult:
             if isinstance(v, dict)
         ]
         players.sort(key=lambda p: (p.team, -p.damage_dealt))
+        battle_hash = _make_battle_hash([p.name for p in players])
         return BattleResult(
             filename=filename,
             map_name=map_name,
             date_time=date_time,
+            battle_hash=battle_hash,
             winner_team=0,
             player_team=player_team,
             player_vehicle=player_vehicle,
@@ -166,11 +176,13 @@ def parse_replay(path: str | Path) -> BattleResult:
         ))
 
     players.sort(key=lambda p: (p.team, -p.damage_dealt))
+    battle_hash = _make_battle_hash([p.name for p in players])
 
     return BattleResult(
         filename=filename,
         map_name=map_name,
         date_time=date_time,
+        battle_hash=battle_hash,
         winner_team=winner_team,
         player_team=player_team,
         player_vehicle=player_vehicle,

@@ -15,11 +15,11 @@ CREATE TABLE IF NOT EXISTS battles (
     filename    TEXT NOT NULL,
     map_name    TEXT NOT NULL,
     date_time   TEXT NOT NULL,
+    battle_hash TEXT UNIQUE,
     result      TEXT NOT NULL,
     player_team INTEGER NOT NULL,
     winner_team INTEGER NOT NULL,
-    created_at  TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (date_time, map_name)
+    created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS player_stats (
@@ -65,19 +65,21 @@ def init_db():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(_DDL)
-            # Migration: switch unique key from filename → (date_time, map_name)
-            try:
-                cur.execute("ALTER TABLE battles DROP CONSTRAINT IF EXISTS battles_filename_key")
-            except Exception:
-                conn.rollback()
-            try:
-                cur.execute(
-                    "ALTER TABLE battles ADD CONSTRAINT battles_datetime_map_key"
-                    " UNIQUE (date_time, map_name)"
-                )
-            except Exception:
-                conn.rollback()  # constraint already exists — fine
         conn.commit()
+        # Migrations — each in its own transaction so failures don't block startup
+        _run_migration(conn, "ALTER TABLE battles DROP CONSTRAINT IF EXISTS battles_filename_key")
+        _run_migration(conn, "ALTER TABLE battles DROP CONSTRAINT IF EXISTS battles_datetime_map_key")
+        _run_migration(conn, "ALTER TABLE battles ADD COLUMN IF NOT EXISTS battle_hash TEXT")
+        _run_migration(conn, "ALTER TABLE battles ADD CONSTRAINT battles_hash_key UNIQUE (battle_hash)")
+
+
+def _run_migration(conn, sql: str):
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+        conn.commit()
+    except Exception:
+        conn.rollback()
 
 
 # --- Auth ---
@@ -110,9 +112,9 @@ def get_user_by_username(username: str) -> dict | None:
 def save_battle(battle_dict: dict, user_id: int | None = None) -> bool:
     """Insert battle + stats. Deduplicates by (date_time, map_name). Returns True if new."""
     sql_battle = """
-        INSERT INTO battles (filename, map_name, date_time, result, player_team, winner_team)
-        VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(result)s, %(player_team)s, %(winner_team)s)
-        ON CONFLICT (date_time, map_name) DO NOTHING
+        INSERT INTO battles (filename, map_name, date_time, battle_hash, result, player_team, winner_team)
+        VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(battle_hash)s, %(result)s, %(player_team)s, %(winner_team)s)
+        ON CONFLICT (battle_hash) DO NOTHING
         RETURNING id
     """
     sql_player = """
@@ -135,8 +137,8 @@ def save_battle(battle_dict: dict, user_id: int | None = None) -> bool:
                 is_new = True
             else:
                 cur.execute(
-                    "SELECT id FROM battles WHERE date_time = %s AND map_name = %s",
-                    (battle_dict["date_time"], battle_dict["map_name"]),
+                    "SELECT id FROM battles WHERE battle_hash = %s",
+                    (battle_dict["battle_hash"],),
                 )
                 existing = cur.fetchone()
                 battle_id = existing["id"] if existing else None
