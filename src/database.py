@@ -71,6 +71,7 @@ def init_db():
         _run_migration(conn, "ALTER TABLE battles DROP CONSTRAINT IF EXISTS battles_datetime_map_key")
         _run_migration(conn, "ALTER TABLE battles ADD COLUMN IF NOT EXISTS battle_hash TEXT")
         _run_migration(conn, "ALTER TABLE battles ADD CONSTRAINT battles_hash_key UNIQUE (battle_hash)")
+        _migrate_map_names(conn)
 
 
 def _run_migration(conn, sql: str):
@@ -80,6 +81,17 @@ def _run_migration(conn, sql: str):
         conn.commit()
     except Exception:
         conn.rollback()
+
+
+def _migrate_map_names(conn):
+    from replay_parser import _MAP_NAMES
+    with conn.cursor() as cur:
+        for internal, display in _MAP_NAMES.items():
+            cur.execute(
+                "UPDATE battles SET map_name = %s WHERE map_name = %s",
+                (display, internal),
+            )
+    conn.commit()
 
 
 # --- Auth ---
