@@ -27,7 +27,9 @@ def startup():
         init_db()
         _DB_AVAILABLE = True
     except Exception as e:
+        import traceback
         print(f"[DB] init failed: {e}")
+        traceback.print_exc()
         _DB_AVAILABLE = False
 
 
