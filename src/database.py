@@ -165,6 +165,18 @@ def save_battle(battle_dict: dict, user_id: int | None = None) -> bool:
     return is_new
 
 
+# --- Player management ---
+
+def delete_player(name: str) -> int:
+    """Delete all stats for a player by name. Returns number of rows deleted."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM player_stats WHERE name = %s", (name,))
+            count = cur.rowcount
+        conn.commit()
+    return count
+
+
 # --- Analytics ---
 
 def _user_filter(user_id: int | None) -> tuple[str, list]:

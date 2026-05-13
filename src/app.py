@@ -13,7 +13,7 @@ from replay_parser import parse_replay
 from database import (
     init_db, save_battle,
     get_player_summary, get_map_summary, get_vehicle_summary, get_db_totals,
-    create_user, get_user_by_username,
+    create_user, get_user_by_username, delete_player,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 
@@ -185,7 +185,21 @@ def save_battles(
     return {"saved": saved, "skipped": skipped}
 
 
+# --- Player management ---
+
+@app.delete("/api/players/{name}")
+def remove_player(name: str, authorization: str | None = Header(default=None)):
+    if not _DB_AVAILABLE:
+        raise HTTPException(503, "Database unavailable")
+    require_auth(authorization)
+    count = delete_player(name)
+    if count == 0:
+        raise HTTPException(404, "Player not found")
+    return {"deleted": count}
+
+
 # --- Analytics ---
+
 
 @app.get("/api/analytics/summary")
 def analytics_summary(
