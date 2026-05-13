@@ -635,40 +635,55 @@
       b.players.filter(p => p.team === b.player_team).forEach(p => {
         if (!playerMap.has(p.name)) {
           playerMap.set(p.name, {
-            damage:   new Array(n).fill(null),
-            assists:  new Array(n).fill(null),
-            blocked:  new Array(n).fill(null),
-            received: new Array(n).fill(null),
-            frags:    new Array(n).fill(null),
+            damage:    new Array(n).fill(null),
+            assists:   new Array(n).fill(null),
+            blocked:   new Array(n).fill(null),
+            received:  new Array(n).fill(null),
+            frags:     new Array(n).fill(null),
+            shots:     new Array(n).fill(null),
+            hits:      new Array(n).fill(null),
+            piercings: new Array(n).fill(null),
           });
         }
         const s = playerMap.get(p.name);
-        s.damage[bi]   = p.damage_dealt   ?? null;
-        s.assists[bi]  = p.assists        ?? null;
-        s.blocked[bi]  = p.blocked        ?? null;
-        s.received[bi] = p.damage_received ?? null;
-        s.frags[bi]    = p.frags          ?? null;
+        s.damage[bi]    = p.damage_dealt    ?? null;
+        s.assists[bi]   = p.assists         ?? null;
+        s.blocked[bi]   = p.blocked         ?? null;
+        s.received[bi]  = p.damage_received ?? null;
+        s.frags[bi]     = p.frags           ?? null;
+        s.shots[bi]     = p.shots           ?? null;
+        s.hits[bi]      = p.hits            ?? null;
+        s.piercings[bi] = p.piercings       ?? null;
       });
     });
 
     const rows = [];
     playerMap.forEach((stats, name) => {
       const played = stats.damage.filter(v => v !== null).length;
+      const avgShots     = avgFloat(stats.shots);
+      const avgHits      = avgFloat(stats.hits);
+      const avgPiercings = avgFloat(stats.piercings);
       rows.push({ name, stats, played,
-        avgDamage:   avgInt(stats.damage),
-        avgAssists:  avgInt(stats.assists),
-        avgBlocked:  avgInt(stats.blocked),
-        avgReceived: avgInt(stats.received),
-        avgFrags:    avgFloat(stats.frags),
+        avgDamage:    avgInt(stats.damage),
+        avgAssists:   avgInt(stats.assists),
+        avgBlocked:   avgInt(stats.blocked),
+        avgReceived:  avgInt(stats.received),
+        avgFrags:     avgFloat(stats.frags),
+        avgShots,
+        avgHits,
+        avgPiercings,
+        accuracy:     avgShots > 0 ? Math.round(avgHits      / avgShots * 100) : 0,
+        penetration:  avgHits  > 0 ? Math.round(avgPiercings / avgHits  * 100) : 0,
       });
     });
 
     matricesEl.innerHTML =
       buildAvgTable(rows, sortedBattles) +
-      buildMetricTable('damage',  rows, sortedBattles) +
-      buildMetricTable('assists', rows, sortedBattles) +
-      buildMetricTable('combo',   rows, sortedBattles) +
-      buildMetricTable('frags',   rows, sortedBattles);
+      buildMetricTable('damage',   rows, sortedBattles) +
+      buildMetricTable('assists',  rows, sortedBattles) +
+      buildMetricTable('combo',    rows, sortedBattles) +
+      buildMetricTable('frags',    rows, sortedBattles) +
+      buildMetricTable('accuracy', rows, sortedBattles);
 
     mainContent.style.display = 'block';
   }
@@ -698,6 +713,9 @@
     const maxRcv = Math.max(...rows.map(r => r.avgReceived), 1);
     const maxFrg = Math.max(...rows.map(r => r.avgFrags), 1);
 
+    const maxAcc = Math.max(...rows.map(r => r.accuracy), 1);
+    const maxPen = Math.max(...rows.map(r => r.penetration), 1);
+
     const head = `<tr>
       <th class="sticky-l">Игрок</th>
       <th><div class="b-head"><span class="b-map">Ср. урон</span></div></th>
@@ -705,6 +723,8 @@
       <th><div class="b-head"><span class="b-map">Ср. заблок</span></div></th>
       <th><div class="b-head"><span class="b-map">Ср. получен</span></div></th>
       <th><div class="b-head"><span class="b-map">Ср. фраги</span></div></th>
+      <th><div class="b-head"><span class="b-map">Точность</span></div></th>
+      <th><div class="b-head"><span class="b-map">% пробитий</span></div></th>
     </tr>`;
 
     const body = sorted.map(r => `<tr>
@@ -714,6 +734,8 @@
       <td class="dmg ${heatClass(r.avgBlocked,  maxBlk)}">${r.avgBlocked.toLocaleString('ru')}</td>
       <td class="${heatClass(r.avgReceived, maxRcv)}">${r.avgReceived.toLocaleString('ru')}</td>
       <td class="${heatClass(r.avgFrags,    maxFrg)}">${fmtFrags(r.avgFrags)}</td>
+      <td class="${heatClass(r.accuracy,    maxAcc)}">${r.accuracy}%</td>
+      <td class="${heatClass(r.penetration, maxPen)}">${r.penetration}%</td>
     </tr>`).join('');
 
     return tableCard('Средние показатели', `${sorted.length} игроков · ${battles.length} боёв`, head, body);
@@ -721,10 +743,11 @@
 
   function buildMetricTable(metric, rows, battles) {
     const cfg = {
-      damage:  { sortKey: 'avgDamage',   title: 'Урон',             col: 'Ср. урон ↓' },
-      assists: { sortKey: 'avgAssists',  title: 'Ассист',           col: 'Ср. ассист ↓' },
-      combo:   { sortKey: 'avgBlocked',  title: 'Заблок / Получен', col: 'Заблок ↓ / Получен' },
-      frags:   { sortKey: 'avgFrags',    title: 'Фраги',            col: 'Ср. фраги ↓' },
+      damage:   { sortKey: 'avgDamage',   title: 'Урон',                  col: 'Ср. урон ↓' },
+      assists:  { sortKey: 'avgAssists',  title: 'Ассист',                col: 'Ср. ассист ↓' },
+      combo:    { sortKey: 'avgBlocked',  title: 'Заблок / Получен',      col: 'Заблок ↓ / Получен' },
+      frags:    { sortKey: 'avgFrags',    title: 'Фраги',                 col: 'Ср. фраги ↓' },
+      accuracy: { sortKey: 'accuracy',    title: 'Точность / Пробития',   col: 'Точность ↓' },
     }[metric];
 
     const sorted = [...rows].sort((a, b) => b[cfg.sortKey] - a[cfg.sortKey]);
@@ -743,9 +766,10 @@
     </tr>`;
 
     let colMax;
-    if (metric === 'damage')  colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.damage[bi]  ?? 0), 1));
-    if (metric === 'assists') colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.assists[bi] ?? 0), 1));
-    if (metric === 'combo')   colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.blocked[bi] ?? 0), 1));
+    if (metric === 'damage')   colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.damage[bi]  ?? 0), 1));
+    if (metric === 'assists')  colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.assists[bi] ?? 0), 1));
+    if (metric === 'combo')    colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.blocked[bi] ?? 0), 1));
+    if (metric === 'accuracy') colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.shots[bi]   ?? 0), 1));
 
     const body = sorted.map(r => {
       let cells = '', avgCell = '';
@@ -775,13 +799,26 @@
         }).join('');
         avgCell = `<span class="avg-val">${r.avgBlocked.toLocaleString('ru')}</span><span class="avg-sub">${r.avgReceived.toLocaleString('ru')} пол.</span>`;
 
-      } else {
+      } else if (metric === 'frags') {
         cells = r.stats.frags.map(f => {
           if (f === null) return `<td class="heat-none">—</td>`;
           const cls = f === 0 ? 'frag-0' : f === 1 ? 'frag-1' : f === 2 ? 'frag-2' : f === 3 ? 'frag-3' : 'frag-4';
           return `<td class="${cls}">${f}</td>`;
         }).join('');
         avgCell = `<span class="avg-val">${fmtFrags(r.avgFrags)}</span><span class="avg-sub">${r.played} боёв</span>`;
+
+      } else {
+        cells = r.stats.shots.map((sh, bi) => {
+          if (sh === null) return `<td class="heat-none">—</td>`;
+          const hi = r.stats.hits[bi] ?? 0;
+          const pi = r.stats.piercings[bi] ?? 0;
+          const acc = sh > 0 ? Math.round(hi / sh * 100) : 0;
+          return `<td class="cell-combo ${heatClass(sh, colMax[bi])}">
+            <span class="combo-top">${sh} · ${acc}%</span>
+            <span class="combo-bot">${hi}п / ${pi}проб</span>
+          </td>`;
+        }).join('');
+        avgCell = `<span class="avg-val">${r.accuracy}%</span><span class="avg-sub">${r.penetration}% проб</span>`;
       }
 
       return `<tr>

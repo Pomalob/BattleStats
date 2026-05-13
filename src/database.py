@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS player_stats (
     assists         INTEGER NOT NULL DEFAULT 0,
     frags           INTEGER NOT NULL DEFAULT 0,
     xp              INTEGER NOT NULL DEFAULT 0,
-    survived        BOOLEAN NOT NULL DEFAULT FALSE
+    survived        BOOLEAN NOT NULL DEFAULT FALSE,
+    shots           INTEGER NOT NULL DEFAULT 0,
+    hits            INTEGER NOT NULL DEFAULT 0,
+    piercings       INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS user_battles (
@@ -71,6 +74,9 @@ def init_db():
         _run_migration(conn, "ALTER TABLE battles DROP CONSTRAINT IF EXISTS battles_datetime_map_key")
         _run_migration(conn, "ALTER TABLE battles ADD COLUMN IF NOT EXISTS battle_hash TEXT")
         _run_migration(conn, "ALTER TABLE battles ADD CONSTRAINT battles_hash_key UNIQUE (battle_hash)")
+        _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS shots INTEGER NOT NULL DEFAULT 0")
+        _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS hits INTEGER NOT NULL DEFAULT 0")
+        _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS piercings INTEGER NOT NULL DEFAULT 0")
         _migrate_map_names(conn)
 
 
@@ -132,10 +138,11 @@ def save_battle(battle_dict: dict, user_id: int | None = None) -> bool:
     sql_player = """
         INSERT INTO player_stats
             (battle_id, name, vehicle, team, damage_dealt, damage_received,
-             blocked, assists, frags, xp, survived)
+             blocked, assists, frags, xp, survived, shots, hits, piercings)
         VALUES
             (%(battle_id)s, %(name)s, %(vehicle)s, %(team)s, %(damage_dealt)s,
-             %(damage_received)s, %(blocked)s, %(assists)s, %(frags)s, %(xp)s, %(survived)s)
+             %(damage_received)s, %(blocked)s, %(assists)s, %(frags)s, %(xp)s, %(survived)s,
+             %(shots)s, %(hits)s, %(piercings)s)
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -219,7 +226,10 @@ def get_player_summary(user_id: int | None = None) -> list[dict]:
             SUM(CASE WHEN b.result = 'loss' THEN 1 ELSE 0 END)           AS losses,
             SUM(CASE WHEN b.result = 'draw' THEN 1 ELSE 0 END)           AS draws,
             ROUND(AVG(CASE WHEN b.result = 'win'  THEN ps.damage_dealt END)) AS avg_dmg_win,
-            ROUND(AVG(CASE WHEN b.result = 'loss' THEN ps.damage_dealt END)) AS avg_dmg_loss
+            ROUND(AVG(CASE WHEN b.result = 'loss' THEN ps.damage_dealt END)) AS avg_dmg_loss,
+            ROUND(AVG(ps.shots))                                              AS avg_shots,
+            ROUND(AVG(ps.hits))                                               AS avg_hits,
+            ROUND(AVG(ps.piercings))                                          AS avg_piercings
         FROM player_stats ps
         JOIN battles b ON b.id = ps.battle_id
         {join}

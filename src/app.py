@@ -78,6 +78,9 @@ def battle_to_dict(b) -> dict:
                 "frags": p.frags,
                 "xp": p.xp,
                 "survived": p.survived,
+                "shots": p.shots,
+                "hits": p.hits,
+                "piercings": p.piercings,
             }
             for p in b.players
         ],

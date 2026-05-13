@@ -56,6 +56,9 @@ class PlayerResult:
     frags: int
     xp: int
     survived: bool
+    shots: int
+    hits: int
+    piercings: int
 
 
 @dataclass
@@ -148,6 +151,9 @@ def parse_replay(path: str | Path) -> BattleResult:
                 frags=0,
                 xp=0,
                 survived=False,
+                shots=0,
+                hits=0,
+                piercings=0,
             )
             for v in meta_vehicles.values()
             if isinstance(v, dict)
@@ -198,6 +204,9 @@ def parse_replay(path: str | Path) -> BattleResult:
         frags: int = v.get("kills", 0)
         xp: int = v.get("xp", 0)
         survived: bool = v.get("deathReason", -1) == -1
+        shots: int = v.get("shots", 0)
+        hits: int = v.get("directHits", 0)
+        piercings: int = v.get("piercings", 0)
 
         players.append(PlayerResult(
             name=name,
@@ -210,6 +219,9 @@ def parse_replay(path: str | Path) -> BattleResult:
             frags=frags,
             xp=xp,
             survived=survived,
+            shots=shots,
+            hits=hits,
+            piercings=piercings,
         ))
 
     players.sort(key=lambda p: (p.team, -p.damage_dealt))
