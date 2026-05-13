@@ -144,7 +144,6 @@ async def upload_replays(
     files: list[UploadFile] = File(...),
     authorization: str | None = Header(default=None),
 ):
-    user = _get_current_user(authorization)
     results, errors = [], []
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -157,15 +156,33 @@ async def upload_replays(
             dest.write_bytes(await upload.read())
             try:
                 battle = parse_replay(dest)
-                d = battle_to_dict(battle)
-                results.append(d)
-                if _DB_AVAILABLE:
-                    save_battle(d, user_id=user["id"] if user else None)
+                results.append(battle_to_dict(battle))
             except Exception as e:
                 errors.append({"file": upload.filename, "error": str(e)})
 
     results.sort(key=lambda r: r["date_time"], reverse=True)
     return {"battles": results, "errors": errors}
+
+
+@app.post("/api/battles/save")
+def save_battles(
+    body: dict,
+    authorization: str | None = Header(default=None),
+):
+    if not _DB_AVAILABLE:
+        raise HTTPException(503, "Database unavailable")
+    user = _get_current_user(authorization)
+    battles = body.get("battles", [])
+    if not isinstance(battles, list):
+        raise HTTPException(400, "battles must be a list")
+    saved, skipped = 0, 0
+    for d in battles:
+        is_new = save_battle(d, user_id=user["id"] if user else None)
+        if is_new:
+            saved += 1
+        else:
+            skipped += 1
+    return {"saved": saved, "skipped": skipped}
 
 
 # --- Analytics ---

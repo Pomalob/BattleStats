@@ -326,6 +326,24 @@
 
   .empty-row td { text-align: center !important; padding: 32px !important; color: var(--text-muted); font-family: 'Inter', sans-serif; }
 
+  /* save bar */
+  .save-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; margin-bottom: 18px; gap: 12px;
+  }
+  .save-bar-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .save-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer; user-select: none; }
+  .save-check input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+  .save-status { font-size: 12px; color: var(--text-muted); }
+  .btn-save {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: inherit; white-space: nowrap; transition: background 0.15s;
+  }
+  .btn-save:hover { background: var(--accent-hover); }
+  .btn-save:disabled { background: var(--surface-3); color: var(--text-dim); cursor: default; }
+
   /* loading */
   .spinner-card {
     background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px;
@@ -395,6 +413,13 @@
   <div id="main-content" style="display:none">
     <div class="summary" id="summary"></div>
     <div class="alerts" id="alerts"></div>
+    <div id="save-bar" style="display:none" class="save-bar">
+      <div class="save-bar-left" id="save-checks"></div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="save-status" id="save-status"></span>
+        <button class="btn-save" id="btn-save" onclick="saveBattles()">Сохранить в базу</button>
+      </div>
+    </div>
     <div id="matrices"></div>
   </div>
 
@@ -410,6 +435,12 @@
   const loading     = document.getElementById('loading');
   const mainContent = document.getElementById('main-content');
   const summaryEl   = document.getElementById('summary');
+  const saveBar     = document.getElementById('save-bar');
+  const saveChecks  = document.getElementById('save-checks');
+  const saveStatus  = document.getElementById('save-status');
+  const btnSave     = document.getElementById('btn-save');
+
+  let _parsedBattles = [];
   const alertsEl    = document.getElementById('alerts');
   const sessionPill = document.getElementById('session-pill');
   const matricesEl  = document.getElementById('matrices');
@@ -461,7 +492,9 @@
     for (const f of files) fd.append('files', f);
     loading.classList.add('visible');
     mainContent.style.display = 'none';
+    saveBar.style.display = 'none';
     alertsEl.innerHTML = '';
+    _parsedBattles = [];
     try {
       const res  = await fetch('/api/upload', {
         method: 'POST', body: fd,
@@ -492,6 +525,49 @@
     mainContent.style.display = 'block';
   }
 
+  function buildSaveBar(battles) {
+    const LABELS = { win: 'Победа', loss: 'Поражение', draw: 'Ничья' };
+    saveChecks.innerHTML = battles.map((b, i) => `
+      <label class="save-check">
+        <input type="checkbox" data-i="${i}" checked onchange="updateSaveBtn()">
+        <span>${b.map_name} — ${LABELS[b.result] || b.result} (${b.date_time.slice(0, 10)})</span>
+      </label>`).join('');
+    saveStatus.textContent = '';
+    btnSave.disabled = false;
+    saveBar.style.display = 'flex';
+  }
+
+  function updateSaveBtn() {
+    const checked = saveChecks.querySelectorAll('input:checked').length;
+    btnSave.disabled = checked === 0;
+    if (!btnSave.disabled) saveStatus.textContent = '';
+  }
+
+  async function saveBattles() {
+    const selected = [...saveChecks.querySelectorAll('input:checked')]
+      .map(cb => _parsedBattles[+cb.dataset.i]);
+    if (!selected.length) return;
+    btnSave.disabled = true;
+    saveStatus.textContent = 'Сохранение…';
+    try {
+      const res = await fetch('/api/battles/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_token}` },
+        body: JSON.stringify({ battles: selected }),
+      });
+      const data = await res.json();
+      if (!res.ok) { saveStatus.textContent = `Ошибка: ${data?.detail ?? res.status}`; btnSave.disabled = false; return; }
+      saveStatus.textContent = `✓ Сохранено: ${data.saved}, пропущено (дубли): ${data.skipped}`;
+      saveChecks.querySelectorAll('input:checked').forEach(cb => {
+        cb.disabled = true;
+        cb.closest('label').style.opacity = '0.4';
+      });
+    } catch (e) {
+      saveStatus.textContent = `Ошибка: ${e.message}`;
+      btnSave.disabled = false;
+    }
+  }
+
   function renderAll({ battles = [], errors = [] }) {
     if (errors.length) {
       alertsEl.innerHTML = `
@@ -510,7 +586,10 @@
         </div>`;
     }
 
-    if (!battles.length) { mainContent.style.display = 'block'; return; }
+    if (!battles.length) { mainContent.style.display = 'block'; saveBar.style.display = 'none'; return; }
+
+    _parsedBattles = battles;
+    buildSaveBar(battles);
 
     const wins   = battles.filter(b => b.result === 'win').length;
     const losses = battles.filter(b => b.result === 'loss').length;
