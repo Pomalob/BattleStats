@@ -174,6 +174,32 @@ def save_battle(battle_dict: dict, user_id: int | None = None) -> bool:
 
 # --- Player management ---
 
+def get_battles_list(user_id: int | None = None) -> list[dict]:
+    join, params = _user_filter(user_id)
+    sql = f"""
+        SELECT b.id, b.date_time, b.map_name, b.result, b.filename,
+               COUNT(ps.id) AS player_count
+        FROM battles b
+        {join}
+        LEFT JOIN player_stats ps ON ps.battle_id = b.id
+        GROUP BY b.id, b.date_time, b.map_name, b.result, b.filename
+        ORDER BY b.date_time DESC
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+
+
+def delete_battle(battle_id: int) -> bool:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM battles WHERE id = %s", (battle_id,))
+            deleted = cur.rowcount > 0
+        conn.commit()
+    return deleted
+
+
 def delete_player(name: str) -> int:
     """Delete all stats for a player by name. Returns number of rows deleted."""
     with get_conn() as conn:

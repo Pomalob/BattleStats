@@ -164,7 +164,7 @@
     return 'heat-top';
   }
 
-  function render({ totals, players, maps, vehicles }) {
+  function render({ totals, players, maps, vehicles }, battles) {
     const total = Number(totals.total_battles ?? 0);
     const wins  = Number(totals.wins  ?? 0);
     const losses= Number(totals.losses ?? 0);
@@ -178,6 +178,7 @@
       ${renderPlayers(players)}
       ${renderVehicles(vehicles)}
       ${renderMaps(maps)}
+      ${renderBattles(battles)}
     `;
   }
 
@@ -385,19 +386,69 @@
 
   async function load() {
     document.getElementById('content').innerHTML = `<div class="spinner-wrap"><div class="spinner"></div> Загружаем данные…</div>`;
-    const res  = await fetch(`/api/analytics/summary?mine=${_mineOnly}`, {
-      headers: { 'Authorization': `Bearer ${_token}` },
-    });
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    const data = await res.json();
+    const headers = { 'Authorization': `Bearer ${_token}` };
+    const [summaryRes, battlesRes] = await Promise.all([
+      fetch(`/api/analytics/summary?mine=${_mineOnly}`, { headers }),
+      fetch(`/api/battles?mine=${_mineOnly}`, { headers }),
+    ]);
+    if (summaryRes.status === 401) { window.location.href = '/login'; return; }
+    const data = await summaryRes.json();
     if (data.error) {
-      const msg = data.error === 'database_unavailable'
-        ? 'База данных недоступна.'
-        : data.error;
+      const msg = data.error === 'database_unavailable' ? 'База данных недоступна.' : data.error;
       document.getElementById('content').innerHTML = `<div class="empty-state"><strong>Ошибка</strong>${msg}</div>`;
       return;
     }
-    render(data);
+    const battlesData = battlesRes.ok ? await battlesRes.json() : { battles: [] };
+    render(data, battlesData.battles ?? []);
+  }
+
+  function renderBattles(battles) {
+    if (!battles || !battles.length) return '';
+    const resultLabel = { win: 'Победа', loss: 'Поражение', draw: 'Ничья' };
+    const resultCls   = { win: 'win-badge', loss: 'loss-badge', draw: '' };
+
+    const rows = battles.map(b => {
+      const date = (b.date_time || '').slice(0, 16).replace('T', ' ');
+      const resCls = resultCls[b.result] ?? '';
+      const resLabel = resultLabel[b.result] ?? b.result;
+      return `<tr id="battle-row-${b.id}">
+        <td style="color:var(--text-muted);font-size:12px">${date}</td>
+        <td class="sticky-l" style="min-width:160px"><div class="player-name">${b.map_name}</div></td>
+        <td>${resCls ? `<span class="${resCls}">${resLabel}</span>` : resLabel}</td>
+        <td style="color:var(--text-muted)">${b.player_count} игроков</td>
+        <td style="color:var(--text-dim);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${b.filename}</td>
+        <td><button class="btn-remove" title="Удалить бой" onclick="removeBattle(${b.id})">✕</button></td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="table-card">
+      <div class="table-meta"><strong>Все бои</strong> &nbsp;·&nbsp; ${battles.length} боёв в базе</div>
+      <div class="table-scroll"><table class="stats">
+        <thead><tr>
+          <th>Дата</th>
+          <th class="sticky-l">Карта</th>
+          <th>Результат</th>
+          <th>Игроков</th>
+          <th>Файл</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  async function removeBattle(id) {
+    if (!confirm('Удалить этот бой из базы?')) return;
+    const res = await fetch(`/api/battles/${id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${_token}` },
+    });
+    if (res.ok) {
+      load();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert(data.detail ?? 'Ошибка удаления');
+    }
   }
 
   async function removePlayer(name) {

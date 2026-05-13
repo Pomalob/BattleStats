@@ -14,6 +14,7 @@ from database import (
     init_db, save_battle,
     get_player_summary, get_map_summary, get_vehicle_summary, get_db_totals,
     create_user, get_user_by_username, delete_player,
+    get_battles_list, delete_battle,
 )
 from auth import hash_password, verify_password, create_token, decode_token
 
@@ -186,6 +187,34 @@ def save_battles(
         else:
             skipped += 1
     return {"saved": saved, "skipped": skipped}
+
+
+# --- Battle management ---
+
+@app.get("/api/battles")
+def list_battles(
+    mine: bool = False,
+    authorization: str | None = Header(default=None),
+):
+    if not _DB_AVAILABLE:
+        raise HTTPException(503, "Database unavailable")
+    user = _get_current_user(authorization)
+    user_id = user["id"] if (mine and user) else None
+    try:
+        return {"battles": get_battles_list(user_id)}
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/battles/{battle_id}")
+def remove_battle(battle_id: int, authorization: str | None = Header(default=None)):
+    if not _DB_AVAILABLE:
+        raise HTTPException(503, "Database unavailable")
+    require_auth(authorization)
+    if not delete_battle(battle_id):
+        raise HTTPException(404, "Battle not found")
+    return {"deleted": battle_id}
 
 
 # --- Player management ---
