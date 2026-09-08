@@ -118,6 +118,7 @@ def battle_to_dict(b) -> dict:
         "winner_team": b.winner_team,
         "player_team": b.player_team,
         "player_vehicle": b.player_vehicle,
+        "complete": b.complete,
         "players": [
             {
                 "name": p.name,
@@ -259,7 +260,7 @@ async def upload_replays(
 # Fields save_battle() needs, and the type each is coerced to before it reaches SQL.
 _BATTLE_FIELDS = {
     "filename": str, "map_name": str, "date_time": str, "battle_hash": str,
-    "result": str, "player_team": int, "winner_team": int,
+    "player_team": int, "winner_team": int,
 }
 _PLAYER_FIELDS = {
     "name": str, "vehicle": str, "team": int, "damage_dealt": int, "damage_received": int,
@@ -280,6 +281,12 @@ def _coerce(value, kind):
     return str(value or "")[:_MAX_TEXT]
 
 
+def _battle_result(winner_team: int, player_team: int) -> str:
+    if winner_team == 0:
+        return "draw"
+    return "win" if winner_team == player_team else "loss"
+
+
 def _clean_battle(raw) -> dict:
     """Rebuild a battle payload from scratch so only known, typed fields reach the database."""
     if not isinstance(raw, dict) or not isinstance(raw.get("players"), list):
@@ -287,12 +294,25 @@ def _clean_battle(raw) -> dict:
     battle = {k: _coerce(raw.get(k), kind) for k, kind in _BATTLE_FIELDS.items()}
     if not battle["battle_hash"]:
         raise HTTPException(400, "У боя нет battle_hash")
-    if battle["result"] not in ("win", "loss", "draw"):
-        raise HTTPException(400, "Результат боя должен быть win, loss или draw")
+    if not battle["player_team"]:
+        raise HTTPException(400, "В бою не определена команда игрока")
+    # Derived here rather than taken from the client, so the stored result can never
+    # contradict the teams it is supposed to follow from.
+    battle["result"] = _battle_result(battle["winner_team"], battle["player_team"])
+
     battle["players"] = [
         {k: _coerce(p.get(k), kind) for k, kind in _PLAYER_FIELDS.items()}
         for p in raw["players"] if isinstance(p, dict)
     ]
+    if not battle["players"]:
+        raise HTTPException(400, "В бою нет игроков")
+    # An unfinished replay carries a roster and nothing else; storing it would add a
+    # phantom draw and a zero row for every player in it.
+    if raw.get("complete") is False or not any(
+        p["shots"] or p["damage_dealt"] or p["damage_received"] or p["blocked"]
+        for p in battle["players"]
+    ):
+        raise HTTPException(400, "Незавершённый реплей: в нём нет результатов боя")
     return battle
 
 
@@ -305,13 +325,15 @@ def save_battles(body: dict, user: dict = Depends(require_user)):
     if len(battles) > config.MAX_FILES_PER_UPLOAD:
         raise HTTPException(413, "Слишком много боёв в одном запросе")
 
-    saved, skipped = 0, 0
+    counts = {"created": 0, "linked": 0, "already": 0}
     for raw in battles:
-        if save_battle(_clean_battle(raw), user_id=user["id"]):
-            saved += 1
-        else:
-            skipped += 1
-    return {"saved": saved, "skipped": skipped}
+        counts[save_battle(_clean_battle(raw), user_id=user["id"])] += 1
+    return {
+        "saved": counts["created"] + counts["linked"],
+        "created": counts["created"],
+        "linked": counts["linked"],
+        "skipped": counts["already"],
+    }
 
 
 # --- Battle management ---

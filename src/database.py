@@ -2,6 +2,7 @@ import threading
 from contextlib import contextmanager
 from urllib.parse import urlsplit
 
+import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 
@@ -145,6 +146,9 @@ def init_db():
         _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS shots INTEGER NOT NULL DEFAULT 0")
         _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS hits INTEGER NOT NULL DEFAULT 0")
         _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS piercings INTEGER NOT NULL DEFAULT 0")
+        # Fails if the table already holds names that differ only by case; that is a
+        # data problem to resolve by hand, not a reason to block startup.
+        _run_migration(conn, "CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key ON users (lower(username))")
         _migrate_map_names(conn)
 
 
@@ -173,16 +177,19 @@ def _migrate_map_names(conn):
 # --- Auth ---
 
 def create_user(username: str, password_hash: str) -> dict | None:
+    """Create a user, or return None when the name is taken (case-insensitively)."""
     sql = """
         INSERT INTO users (username, password_hash)
         VALUES (%s, %s)
-        ON CONFLICT (username) DO NOTHING
         RETURNING id, username
     """
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, (username, password_hash))
-            row = cur.fetchone()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (username, password_hash))
+                row = cur.fetchone()
+    except psycopg2.errors.UniqueViolation:
+        return None
     return dict(row) if row else None
 
 
@@ -190,7 +197,7 @@ def get_user_by_username(username: str) -> dict | None:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, username, password_hash FROM users WHERE username = %s",
+                "SELECT id, username, password_hash FROM users WHERE lower(username) = lower(%s)",
                 (username,),
             )
             row = cur.fetchone()
@@ -199,8 +206,12 @@ def get_user_by_username(username: str) -> dict | None:
 
 # --- Battles ---
 
-def save_battle(battle_dict: dict, user_id: int) -> bool:
-    """Insert battle + stats, deduplicated by battle_hash. Returns True if the battle was new."""
+def save_battle(battle_dict: dict, user_id: int) -> str:
+    """Insert battle + stats, deduplicated by battle_hash.
+
+    Returns "created" (new battle), "linked" (someone had already uploaded this battle
+    and it is now in this user's history too) or "already" (nothing changed).
+    """
     sql_battle = """
         INSERT INTO battles (filename, map_name, date_time, battle_hash, result, player_team, winner_team)
         VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(battle_hash)s, %(result)s, %(player_team)s, %(winner_team)s)
@@ -225,7 +236,7 @@ def save_battle(battle_dict: dict, user_id: int) -> bool:
                 battle_id = row["id"]
                 for p in battle_dict["players"]:
                     cur.execute(sql_player, {**p, "battle_id": battle_id})
-                is_new = True
+                outcome = "created"
             else:
                 cur.execute(
                     "SELECT id FROM battles WHERE battle_hash = %s",
@@ -233,14 +244,18 @@ def save_battle(battle_dict: dict, user_id: int) -> bool:
                 )
                 existing = cur.fetchone()
                 battle_id = existing["id"] if existing else None
-                is_new = False
+                outcome = "already"
 
             if battle_id:
                 cur.execute(
                     "INSERT INTO user_battles (user_id, battle_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     (user_id, battle_id),
                 )
-    return is_new
+                # A battle someone else uploaded is not a duplicate for this user: the
+                # row already existed, but it has only now joined their history.
+                if outcome == "already" and cur.rowcount:
+                    outcome = "linked"
+    return outcome
 
 
 def get_battles_list(user_id: int | None = None, viewer_id: int | None = None) -> list[dict]:

@@ -115,11 +115,11 @@ def test_save_then_list_battles(client, auth, fake_db):
     battle = _upload(client, headers).json()["battles"][0]
 
     res = client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
-    assert res.json() == {"saved": 1, "skipped": 0}
+    assert res.json() == {"saved": 1, "created": 1, "linked": 0, "skipped": 0}
 
     # The same battle uploaded twice is deduplicated by its hash.
     res = client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
-    assert res.json() == {"saved": 0, "skipped": 1}
+    assert res.json() == {"saved": 0, "created": 0, "linked": 0, "skipped": 1}
 
     listed = client.get("/api/battles", headers=headers).json()["battles"]
     assert len(listed) == 1 and listed[0]["mine"] is True
@@ -127,9 +127,10 @@ def test_save_then_list_battles(client, auth, fake_db):
 
 @pytest.mark.parametrize("payload", [
     {"battles": "not-a-list"},
-    {"battles": [{"players": []}]},                                 # no battle_hash
-    {"battles": [{"battle_hash": "h", "players": {}}]},             # players is not a list
-    {"battles": [{"battle_hash": "h", "result": "banana", "players": []}]},
+    {"battles": [{"players": []}]},                                    # no battle_hash
+    {"battles": [{"battle_hash": "h", "players": {}}]},                # players is not a list
+    {"battles": [{"battle_hash": "h", "player_team": 0, "players": []}]},  # no team
+    {"battles": [{"battle_hash": "h", "player_team": 1, "players": []}]},  # no players
 ])
 def test_save_rejects_malformed_payloads(client, auth, payload):
     assert client.post("/api/battles/save", json=payload, headers=auth()).status_code == 400
@@ -224,3 +225,70 @@ def test_healthz_is_unhealthy_without_a_database(client, monkeypatch):
     monkeypatch.setattr(app_module, "_DB_AVAILABLE", False)
     res = client.get("/healthz")
     assert res.status_code == 503 and res.json()["status"] == "degraded"
+
+
+# --- what actually gets stored ---
+
+def test_the_result_is_derived_from_the_teams_not_taken_from_the_client(client, auth, fake_db):
+    headers = auth()
+    battle = _upload(client, headers).json()["battles"][0]
+    assert battle["result"] == "win"
+    battle["result"] = "loss"          # a client claiming otherwise
+    battle["winner_team"] = 1
+    battle["player_team"] = 1
+
+    client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
+    assert next(iter(fake_db.battles.values()))["result"] == "win"
+
+
+def test_a_battle_whose_teams_say_loss_is_stored_as_a_loss(client, auth, fake_db):
+    headers = auth()
+    battle = _upload(client, headers).json()["battles"][0]
+    battle["winner_team"] = 2
+    battle["player_team"] = 1
+    client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
+    assert next(iter(fake_db.battles.values()))["result"] == "loss"
+
+
+def test_an_unfinished_replay_is_reported_but_not_stored(client, auth, fake_db):
+    """It has a roster and no results, so saving it would invent a draw full of zeros."""
+    headers = auth()
+    body = _upload(client, headers, data=build_replay(with_results=False)).json()
+    battle = body["battles"][0]
+    assert battle["complete"] is False
+
+    res = client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
+    assert res.status_code == 400
+    assert "езавершённый" in res.json()["detail"]
+    assert fake_db.battles == {}
+
+
+def test_a_battle_with_no_recorded_activity_is_refused(client, auth, fake_db):
+    headers = auth()
+    battle = _upload(client, headers).json()["battles"][0]
+    for p in battle["players"]:
+        p.update(shots=0, damage_dealt=0, damage_received=0, blocked=0)
+    assert client.post("/api/battles/save", json={"battles": [battle]}, headers=headers).status_code == 400
+
+
+def test_saving_reports_new_shared_and_already_known_battles(client, auth, fake_db):
+    first = auth("first", "secret123")
+    second = auth("second", "secret123")
+    battle = _upload(client, first).json()["battles"][0]
+
+    assert client.post("/api/battles/save", json={"battles": [battle]}, headers=first).json() == \
+        {"saved": 1, "created": 1, "linked": 0, "skipped": 0}
+    # Someone else's upload of the same battle joins their history rather than vanishing.
+    assert client.post("/api/battles/save", json={"battles": [battle]}, headers=second).json() == \
+        {"saved": 1, "created": 0, "linked": 1, "skipped": 0}
+    assert client.post("/api/battles/save", json={"battles": [battle]}, headers=second).json() == \
+        {"saved": 0, "created": 0, "linked": 0, "skipped": 1}
+
+
+# --- usernames ---
+
+def test_usernames_differing_only_in_case_are_the_same_account(client):
+    client.post("/api/auth/register", json={"username": "Pomalob", "password": "secret123"})
+    assert client.post("/api/auth/register", json={"username": "pomalob", "password": "other123"}).status_code == 409
+    res = client.post("/api/auth/login", json={"username": "POMALOB", "password": "secret123"})
+    assert res.status_code == 200 and res.json()["username"] == "Pomalob"

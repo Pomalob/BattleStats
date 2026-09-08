@@ -102,3 +102,39 @@ def test_parse_replay_reads_from_disk(tmp_path):
     path = tmp_path / "battle.mtreplay"
     path.write_bytes(build_replay())
     assert parse_replay(path).filename == "battle.mtreplay"
+
+
+def test_assists_include_stun_damage():
+    """Artillery stun assist counts towards assist damage just like radio and track."""
+    data = build_replay(players=[
+        {"name": "Alice", "team": 1, "assist_radio": 300, "assist_track": 200, "assist_stun": 500},
+    ])
+    assert parse_replay_bytes(data, "b.mtreplay").players[0].assists == 1000
+
+
+def test_a_finished_replay_is_marked_complete():
+    assert parse_replay_bytes(build_replay(), "b.mtreplay").complete is True
+
+
+def test_a_replay_without_results_is_marked_incomplete():
+    assert parse_replay_bytes(build_replay(with_results=False), "b.mtreplay").complete is False
+
+
+def test_team_is_recovered_when_meta_hides_the_player_name():
+    """The anonymiser rewrites names in meta, so the team has to come from the results."""
+    data = build_replay(player_name="Alice", anonymise_meta=True, winner_team=2,
+                        players=[
+                            {"name": "Alice", "team": 2, "damage": 1000},
+                            {"name": "Enemy", "team": 1, "damage": 500},
+                        ])
+    battle = parse_replay_bytes(data, "b.mtreplay")
+    assert battle.player_team == 2
+    assert battle.result == "win"
+
+
+def test_a_replay_with_no_identifiable_player_is_rejected():
+    """Better a named error than a battle silently filed as a loss for team 0."""
+    data = build_replay(player_name="Ghost", anonymise_meta=True, drop_personal=True,
+                        players=[{"name": "Alice", "team": 1, "damage": 100}])
+    with pytest.raises(ValueError, match="команду игрока"):
+        parse_replay_bytes(data, "b.mtreplay")

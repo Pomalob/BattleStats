@@ -18,11 +18,17 @@ def build_replay(
     winner_team: int = 1,
     players: list[dict] | None = None,
     with_results: bool = True,
+    anonymise_meta: bool = False,
+    drop_personal: bool = False,
 ) -> bytes:
     """Assemble a replay from a compact player spec.
 
     Each player dict accepts: name, team, vehicle_type, damage, received, blocked,
-    assist_radio, assist_track, kills, xp, shots, hits, piercings, death_reason.
+    assist_radio, assist_track, assist_stun, kills, xp, shots, hits, piercings, death_reason.
+
+    anonymise_meta replaces the names in the metadata block the way the in-game
+    nickname anonymiser does; drop_personal removes the recording player's own
+    result entry.
     """
     players = players if players is not None else [
         {"name": "Alice", "team": 1, "vehicle_type": "ussr:R231_Object_278", "damage": 2400,
@@ -35,7 +41,7 @@ def build_replay(
 
     meta_vehicles = {
         str(i + 1): {
-            "name": p["name"],
+            "name": f"Hidden{i + 1}" if anonymise_meta else p["name"],
             "vehicleType": p.get("vehicle_type", "ussr:R231_Object_278"),
             "team": p.get("team", 1),
         }
@@ -60,6 +66,7 @@ def build_replay(
             "damageBlockedByArmor": p.get("blocked", 0),
             "damageAssistedRadio": p.get("assist_radio", 0),
             "damageAssistedTrack": p.get("assist_track", 0),
+            "damageAssistedStun": p.get("assist_stun", 0),
             "kills": p.get("kills", 0),
             "xp": p.get("xp", 0),
             "shots": p.get("shots", 0),
@@ -69,9 +76,20 @@ def build_replay(
         }]
         for i, p in enumerate(players)
     }
-    results = [
-        {"common": {"winnerTeam": winner_team}, "vehicles": res_vehicles},
-        meta_vehicles,
-        {},
-    ]
-    return data + _block(results)
+    players_info = {
+        str(i + 1): {
+            "name": p["name"],
+            "vehicleType": p.get("vehicle_type", "ussr:R231_Object_278"),
+            "team": p.get("team", 1),
+        }
+        for i, p in enumerate(players)
+    }
+
+    common = {"winnerTeam": winner_team}
+    results_block = {"common": common, "vehicles": res_vehicles}
+    if not drop_personal:
+        own = next((p for p in players if p["name"] == player_name), None)
+        if own is not None:
+            results_block["personal"] = {"avatar": {}, "12345": {"team": own.get("team", 1)}}
+
+    return data + _block([results_block, players_info, {}])

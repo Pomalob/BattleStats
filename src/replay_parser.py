@@ -80,6 +80,7 @@ class BattleResult:
     player_team: int
     player_vehicle: str
     players: list[PlayerResult]
+    complete: bool = True
 
     @property
     def result(self) -> str:
@@ -138,6 +139,39 @@ def _as_int(value) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _team_from_results(player_name: str, results: dict, players_info: dict) -> int:
+    """Find the recording player's team in the results block.
+
+    meta.playerName does not always match a meta vehicle — replays written with the
+    nickname anonymiser carry fake names there. Without this fallback the team stays
+    0, and since 0 never equals the winning team, every such battle is filed as a loss.
+    """
+    personal = results.get("personal") or {}
+    if isinstance(personal, dict):
+        for key, entry in personal.items():
+            if key == "avatar" or not isinstance(entry, dict):
+                continue
+            team = _as_int(entry.get("team"))
+            if team:
+                return team
+
+    res_vehicles = results.get("vehicles") or {}
+    for vid, info in players_info.items():
+        if not isinstance(info, dict) or not player_name:
+            continue
+        if player_name not in (info.get("name"), info.get("realName"), info.get("fakeName")):
+            continue
+        team = _as_int(info.get("team"))
+        if team:
+            return team
+        entry = res_vehicles.get(vid)
+        if isinstance(entry, list) and entry and isinstance(entry[0], dict):
+            team = _as_int(entry[0].get("team"))
+            if team:
+                return team
+    return 0
 
 
 def parse_replay(path: str | Path) -> BattleResult:
@@ -206,6 +240,7 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
             player_team=player_team,
             player_vehicle=player_vehicle,
             players=players,
+            complete=False,
         )
 
     # block2 is a JSON list: [results_dict, players_dict, frags_dict]
@@ -222,6 +257,13 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
 
     # vehicles has full stats per arena_vehicle_id -> list with one dict
     res_vehicles: dict = results.get("vehicles") or {}
+
+    if not player_team:
+        player_team = _team_from_results(player_name, results, players_info)
+    if not player_team:
+        raise ValueError(
+            "Не удалось определить команду игрока — реплей записан не участником боя?"
+        )
 
     players: list[PlayerResult] = []
 
@@ -244,7 +286,9 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
             damage_dealt=_as_int(v.get("damageDealt")),
             damage_received=_as_int(v.get("damageReceived")),
             blocked=_as_int(v.get("damageBlockedByArmor")),
-            assists=_as_int(v.get("damageAssistedRadio")) + _as_int(v.get("damageAssistedTrack")),
+            assists=(_as_int(v.get("damageAssistedRadio"))
+                     + _as_int(v.get("damageAssistedTrack"))
+                     + _as_int(v.get("damageAssistedStun"))),
             frags=_as_int(v.get("kills")),
             xp=_as_int(v.get("xp")),
             survived=v.get("deathReason", -1) == -1,

@@ -31,7 +31,7 @@ class FakeDB:
 
     # --- auth ---
     def create_user(self, username, password_hash):
-        if username in self.users:
+        if any(u.lower() == username.lower() for u in self.users):
             return None
         user = {"id": self._next_user_id, "username": username, "password_hash": password_hash}
         self._next_user_id += 1
@@ -39,7 +39,7 @@ class FakeDB:
         return {"id": user["id"], "username": user["username"]}
 
     def get_user_by_username(self, username):
-        return self.users.get(username)
+        return next((u for name, u in self.users.items() if name.lower() == username.lower()), None)
 
     # --- battles ---
     def save_battle(self, battle, user_id):
@@ -47,13 +47,15 @@ class FakeDB:
             (b for b in self.battles.values() if b["battle_hash"] == battle["battle_hash"]), None
         )
         if existing:
+            if (user_id, existing["id"]) in self.owners:
+                return "already"
             self.owners.add((user_id, existing["id"]))
-            return False
+            return "linked"
         battle_id = self._next_battle_id
         self._next_battle_id += 1
         self.battles[battle_id] = {**battle, "id": battle_id}
         self.owners.add((user_id, battle_id))
-        return True
+        return "created"
 
     def get_battles_list(self, user_id=None, viewer_id=None):
         rows = []

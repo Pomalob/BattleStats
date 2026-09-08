@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <title>StatsBattle — Аналитика</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%231f6feb'/%3E%3Cg fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='6'/%3E%3Cpath d='M12 4v3M12 17v3M4 12h3M17 12h3'/%3E%3C/g%3E%3Ccircle cx='12' cy='12' r='1.8' fill='white'/%3E%3C/svg%3E" />
+<meta name="theme-color" content="#0d1117" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -248,6 +250,11 @@
     const maxOf = key => Math.max(...players.map(p => Number(p[key]) || 0), 1);
     const maxDmg = maxOf('avg_damage'), maxAst = maxOf('avg_assists'), maxBlk = maxOf('avg_blocked');
 
+    // Ratio of the averages, i.e. total hits over total shots - not an average of per-battle ratios.
+    const ratio = (a, b) => Number(b) > 0 ? Math.round(Number(a) / Number(b) * 100) : 0;
+    const maxAcc = Math.max(...players.map(p => ratio(p.avg_hits, p.avg_shots)), 1);
+    const maxPen = Math.max(...players.map(p => ratio(p.avg_piercings, p.avg_hits)), 1);
+
     const rows = players.map(p => {
       const battles = Number(p.battles);
       const wins    = Number(p.wins);
@@ -259,7 +266,7 @@
 
       return `<tr>
         <td class="sticky-l">
-          <div class="player-name">${esc(p.name)}</div>
+          <div class="player-name" title="${esc(p.name)}">${esc(p.name)}</div>
           <div class="player-sub">${battles} ${plural(battles, 'бой', 'боя', 'боёв')} · WR ${wr}%</div>
           <div class="winrate-bar">
             <span class="w" style="flex:${wins}"></span>
@@ -272,6 +279,8 @@
         <td class="${heatClass(Number(p.avg_blocked), maxBlk)}">${fmt(p.avg_blocked)}</td>
         <td>${fmt(p.avg_received)}</td>
         <td>${fmtF(p.avg_frags)}</td>
+        <td class="${heatClass(ratio(p.avg_hits, p.avg_shots), maxAcc)}">${ratio(p.avg_hits, p.avg_shots)}%</td>
+        <td class="${heatClass(ratio(p.avg_piercings, p.avg_hits), maxPen)}">${ratio(p.avg_piercings, p.avg_hits)}%</td>
         <td class="${diffCls}">${diffStr}</td>
         <td><button class="btn-icon" data-hide="${esc(p.name)}" title="Скрыть игрока из аналитики" aria-label="Скрыть игрока">✕</button></td>
       </tr>`;
@@ -284,7 +293,9 @@
       <th>Ср. заблок</th>
       <th>Ср. получен</th>
       <th>Ср. фраги</th>
-      <th>Δ урон win/loss</th>
+      <th>Точность</th>
+      <th>% пробитий</th>
+      <th title="Средний урон в победах минус средний урон в поражениях">Δ урон</th>
       <th></th>
     </tr>`;
 
@@ -318,7 +329,7 @@
       tanks.map((v, i) => {
         const wr = Number(v.battles) ? Math.round(Number(v.wins) / Number(v.battles) * 100) : 0;
         return `<tr>
-          ${i === 0 ? `<td class="sticky-l" rowspan="${tanks.length}"><div class="player-name">${esc(name)}</div></td>` : ''}
+          ${i === 0 ? `<td class="sticky-l" rowspan="${tanks.length}"><div class="player-name" title="${esc(name)}">${esc(name)}</div></td>` : ''}
           <td class="col-vehicle"><span class="vehicle-name">${esc(v.vehicle)}</span></td>
           <td>${v.battles}</td>
           <td class="${heatClass(Number(v.avg_damage), maxDmg)}">${fmt(v.avg_damage)}</td>
@@ -353,7 +364,7 @@
       const wrCls   = wr >= 55 ? 'delta-pos' : wr <= 40 ? 'delta-neg' : '';
 
       return `<tr>
-        <td class="sticky-l"><div class="player-name">${esc(m.map_name)}</div></td>
+        <td class="sticky-l"><div class="player-name" title="${esc(m.map_name)}">${esc(m.map_name)}</div></td>
         <td>${battles}</td>
         <td><span class="badge win">${wins}W</span></td>
         <td><span class="badge loss">${losses}L</span></td>
