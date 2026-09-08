@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <title>StatsBattle — Мир Танков</title>
-<meta name="viewport" content="width=1440" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -358,6 +358,24 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .spinner-text strong { color: var(--text); font-weight: 600; }
+
+  /* narrow screens */
+  @media (max-width: 900px) {
+    .page { padding: 16px 14px 48px; }
+    .header { flex-direction: column; align-items: flex-start; gap: 12px; }
+    .header-right { flex-wrap: wrap; }
+    .dropzone { flex-direction: column; align-items: flex-start; gap: 14px; }
+    .dropzone-actions { width: 100%; }
+    .dropzone-actions .btn-primary { width: 100%; }
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    .save-bar { flex-direction: column; align-items: stretch; gap: 12px; }
+    th.sticky-l, td.sticky-l { min-width: 148px; max-width: 148px; padding: 0 10px; }
+  }
+  @media (max-width: 520px) {
+    .summary { grid-template-columns: 1fr; }
+    .stat-card .value { font-size: 26px; }
+    .table-meta { flex-direction: column; align-items: flex-start; gap: 4px; }
+  }
 </style>
 </head>
 <body>
@@ -430,6 +448,19 @@
   const _token = localStorage.getItem('sb_token');
   if (!_token) window.location.href = '/login';
 
+  // Player, map and vehicle names come from replay files, so never trust them as markup.
+  const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ESCAPES[c]);
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      ...options,
+      headers: { ...(options.headers ?? {}), 'Authorization': `Bearer ${_token}` },
+    });
+    if (res.status === 401) { logout(); throw new Error('Сессия истекла'); }
+    return res;
+  }
+
   const dropzone    = document.getElementById('dropzone');
   const fileInput   = document.getElementById('file-input');
   const loading     = document.getElementById('loading');
@@ -496,10 +527,7 @@
     alertsEl.innerHTML = '';
     _parsedBattles = [];
     try {
-      const res  = await fetch('/api/upload', {
-        method: 'POST', body: fd,
-        headers: { 'Authorization': `Bearer ${_token}` },
-      });
+      const res = await api('/api/upload', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) { showAlert(`Ошибка сервера ${res.status}`, data?.detail ?? JSON.stringify(data)); return; }
       renderAll(data);
@@ -519,7 +547,7 @@
             <line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>
           </svg>
         </div>
-        <div class="alert-body"><div class="alert-title">${title}</div><div class="alert-text">${text}</div></div>
+        <div class="alert-body"><div class="alert-title">${esc(title)}</div><div class="alert-text">${esc(text)}</div></div>
         <button class="alert-dismiss" onclick="this.closest('.alert').remove()">×</button>
       </div>`;
     mainContent.style.display = 'block';
@@ -530,7 +558,7 @@
     saveChecks.innerHTML = battles.map((b, i) => `
       <label class="save-check">
         <input type="checkbox" data-i="${i}" checked onchange="updateSaveBtn()">
-        <span>${b.map_name} — ${LABELS[b.result] || b.result} (${b.date_time.slice(0, 10)})</span>
+        <span>${esc(b.map_name)} — ${esc(LABELS[b.result] ?? b.result)} (${esc(b.date_time.slice(0, 10))})</span>
       </label>`).join('');
     saveStatus.textContent = '';
     btnSave.disabled = false;
@@ -550,9 +578,9 @@
     btnSave.disabled = true;
     saveStatus.textContent = 'Сохранение…';
     try {
-      const res = await fetch('/api/battles/save', {
+      const res = await api('/api/battles/save', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ battles: selected }),
       });
       const data = await res.json();
@@ -580,7 +608,7 @@
           </div>
           <div class="alert-body">
             <div class="alert-title">${errors.length} реплей не удалось разобрать</div>
-            <div class="alert-text">${errors.map(e => `<code>${e.file}</code> — ${e.error}`).join(' &middot; ')}</div>
+            <div class="alert-text">${errors.map(e => `<code>${esc(e.file)}</code> — ${esc(e.error)}`).join(' &middot; ')}</div>
           </div>
           <button class="alert-dismiss" onclick="this.closest('.alert').remove()">×</button>
         </div>`;
@@ -690,14 +718,14 @@
 
   function playerCell(name, played, total) {
     return `<td class="sticky-l"><div class="player"><div class="player-meta">
-      <span class="player-name">${name}</span>
+      <span class="player-name">${esc(name)}</span>
       <span class="player-battles">${played} из ${total} боёв</span>
     </div></div></td>`;
   }
 
   function tableCard(title, meta, headHTML, bodyHTML) {
     return `<div class="table-card" style="margin-bottom:16px">
-      <div class="table-meta"><div><strong>${title}</strong> &nbsp;·&nbsp; ${meta}</div></div>
+      <div class="table-meta"><div><strong>${esc(title)}</strong> &nbsp;·&nbsp; ${esc(meta)}</div></div>
       <div class="table-scroll"><table class="stats">
         <thead>${headHTML}</thead>
         <tbody>${bodyHTML}</tbody>
@@ -754,8 +782,8 @@
 
     const headCols = battles.map((b, bi) => `<th><div class="b-head">
       <span class="b-badge ${b.result || 'draw'}">${resultLabel[b.result] ?? '?'}</span>
-      <span class="b-map" title="${b.map_name}">${b.map_name.length > 10 ? b.map_name.slice(0,9)+'…' : b.map_name}</span>
-      ${b.player_vehicle ? `<span class="b-vehicle" title="${b.player_vehicle}">${b.player_vehicle.length > 12 ? b.player_vehicle.slice(0,11)+'…' : b.player_vehicle}</span>` : ''}
+      <span class="b-map" title="${esc(b.map_name)}">${esc(b.map_name.length > 10 ? b.map_name.slice(0,9)+'…' : b.map_name)}</span>
+      ${b.player_vehicle ? `<span class="b-vehicle" title="${esc(b.player_vehicle)}">${esc(b.player_vehicle.length > 12 ? b.player_vehicle.slice(0,11)+'…' : b.player_vehicle)}</span>` : ''}
       <span class="b-idx">#${String(bi+1).padStart(2,'0')}</span>
     </div></th>`).join('');
 

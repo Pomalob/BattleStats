@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <title>StatsBattle — Аналитика</title>
-<meta name="viewport" content="width=1440" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -109,6 +109,28 @@
 
   .btn-remove { background: transparent; border: 1px solid transparent; color: var(--text-dim); border-radius: 4px; width: 24px; height: 24px; cursor: pointer; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; transition: color 0.1s, border-color 0.1s, background 0.1s; }
   .btn-remove:hover { color: var(--loss); border-color: var(--loss-border); background: var(--loss-bg); }
+
+  /* hidden players */
+  .hidden-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px; padding: 12px 16px; margin-bottom: 24px; }
+  .hidden-label { font-size: 12px; color: var(--text-muted); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-3); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-family: inherit; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip span { color: var(--text-dim); font-size: 11px; }
+  .chip:hover span { color: var(--accent); }
+  .tag-mine { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 10.5px; background: rgba(31,111,235,0.14); color: var(--accent-hover); border: 1px solid rgba(31,111,235,0.35); }
+
+  /* narrow screens */
+  @media (max-width: 900px) {
+    .page { padding: 16px 14px 48px; }
+    .nav { flex-wrap: wrap; gap: 8px; }
+    .nav > div[style] { margin-left: 0 !important; width: 100%; }
+    .summary { grid-template-columns: repeat(2, 1fr); }
+    th.sticky-l, td.sticky-l { min-width: 148px; padding: 0 10px; }
+  }
+  @media (max-width: 520px) {
+    .summary { grid-template-columns: 1fr; }
+    .stat-card .value { font-size: 26px; }
+  }
 </style>
 </head>
 <body>
@@ -146,6 +168,19 @@
   const _username = localStorage.getItem('sb_username') ?? '';
   let _mineOnly = false;
 
+  // Player, map and vehicle names come from replay files, so never trust them as markup.
+  const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ESCAPES[c]);
+
+  async function api(path, options = {}) {
+    const res = await fetch(path, {
+      ...options,
+      headers: { ...(options.headers ?? {}), 'Authorization': `Bearer ${_token}` },
+    });
+    if (res.status === 401) { logout(); throw new Error('Сессия истекла'); }
+    return res;
+  }
+
   const fmt = v => v == null ? '—' : Number(v).toLocaleString('ru');
   const fmtF = v => v == null ? '—' : Number(v).toLocaleString('ru', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
@@ -164,7 +199,7 @@
     return 'heat-top';
   }
 
-  function render({ totals, players, maps, vehicles }, battles) {
+  function render({ totals, players, maps, vehicles, hidden = [] }, battles) {
     const total = Number(totals.total_battles ?? 0);
     const wins  = Number(totals.wins  ?? 0);
     const losses= Number(totals.losses ?? 0);
@@ -174,7 +209,8 @@
 
     document.getElementById('content').innerHTML = `
       ${total === 0 ? renderEmpty() : ''}
-      ${renderSummary(total, wins, losses, draws, wr, lr, totals)}
+      ${renderSummary(total, wins, losses, draws, wr, lr, totals, players.length)}
+      ${renderHidden(hidden)}
       ${renderPlayers(players)}
       ${renderVehicles(vehicles)}
       ${renderMaps(maps)}
@@ -189,7 +225,7 @@
     </div>`;
   }
 
-  function renderSummary(total, wins, losses, draws, wr, lr, totals) {
+  function renderSummary(total, wins, losses, draws, wr, lr, totals, playerCount) {
     if (!total) return '';
     return `<div class="summary">
       <div class="stat-card">
@@ -216,7 +252,7 @@
       </div>
       <div class="stat-card">
         <div class="label">Игроков</div>
-        <div class="value">${document._playerCount ?? '—'}</div>
+        <div class="value">${playerCount}</div>
         <div class="delta">уникальных</div>
       </div>
     </div>`;
@@ -224,7 +260,6 @@
 
   function renderPlayers(players) {
     if (!players.length) return '';
-    document._playerCount = players.length;
 
     const maxDmg = Math.max(...players.map(p => Number(p.avg_damage)), 1);
     const maxAst = Math.max(...players.map(p => Number(p.avg_assists)), 1);
@@ -239,10 +274,9 @@
       const diffCls = dmgDiff > 100 ? 'delta-pos' : dmgDiff < -100 ? 'delta-neg' : 'delta-neu';
       const diffStr = dmgDiff > 0 ? '+' + fmt(dmgDiff) : fmt(dmgDiff);
 
-      const safeName = encodeURIComponent(p.name);
       return `<tr>
         <td class="sticky-l">
-          <div class="player-name">${p.name}</div>
+          <div class="player-name">${esc(p.name)}</div>
           <div class="player-sub">${battles} боёв · WR ${wr}%</div>
           <div class="winrate-bar">
             <span class="w" style="flex:${wins}"></span>
@@ -256,7 +290,7 @@
         <td>${fmt(p.avg_received)}</td>
         <td>${fmtF(p.avg_frags)}</td>
         <td class="${diffCls}">${diffStr}</td>
-        <td><button class="btn-remove" title="Убрать игрока" onclick="removePlayer('${p.name.replace(/'/g, "\\'")}')">✕</button></td>
+        <td><button class="btn-remove" data-hide="${esc(p.name)}" title="Скрыть игрока из аналитики">✕</button></td>
       </tr>`;
     }).join('');
 
@@ -297,9 +331,9 @@
         const wr = Number(v.battles) ? Math.round(Number(v.wins) / Number(v.battles) * 100) : 0;
         return `<tr>
           ${i === 0 ? `<td class="sticky-l" rowspan="${tanks.length}">
-            <div class="player-name">${name}</div>
+            <div class="player-name">${esc(name)}</div>
           </td>` : ''}
-          <td style="text-align:left; padding-left:12px"><span class="vehicle-name">${v.vehicle}</span></td>
+          <td style="text-align:left; padding-left:12px"><span class="vehicle-name">${esc(v.vehicle)}</span></td>
           <td>${v.battles}</td>
           <td class="${heatClass(Number(v.avg_damage), maxDmg)}">${fmt(v.avg_damage)}</td>
           <td>${fmt(v.avg_assists)}</td>
@@ -340,7 +374,7 @@
       const wrCls   = wr >= 55 ? 'delta-pos' : wr <= 40 ? 'delta-neg' : '';
 
       return `<tr>
-        <td class="sticky-l"><div class="player-name">${m.map_name}</div></td>
+        <td class="sticky-l"><div class="player-name">${esc(m.map_name)}</div></td>
         <td>${battles}</td>
         <td><span class="win-badge">${wins}W</span></td>
         <td><span class="loss-badge">${losses}L</span></td>
@@ -386,16 +420,14 @@
 
   async function load() {
     document.getElementById('content').innerHTML = `<div class="spinner-wrap"><div class="spinner"></div> Загружаем данные…</div>`;
-    const headers = { 'Authorization': `Bearer ${_token}` };
     const [summaryRes, battlesRes] = await Promise.all([
-      fetch(`/api/analytics/summary?mine=${_mineOnly}`, { headers }),
-      fetch(`/api/battles?mine=${_mineOnly}`, { headers }),
+      api(`/api/analytics/summary?mine=${_mineOnly}`),
+      api(`/api/battles?mine=${_mineOnly}`),
     ]);
-    if (summaryRes.status === 401) { window.location.href = '/login'; return; }
     const data = await summaryRes.json();
     if (data.error) {
       const msg = data.error === 'database_unavailable' ? 'База данных недоступна.' : data.error;
-      document.getElementById('content').innerHTML = `<div class="empty-state"><strong>Ошибка</strong>${msg}</div>`;
+      document.getElementById('content').innerHTML = `<div class="empty-state"><strong>Ошибка</strong>${esc(msg)}</div>`;
       return;
     }
     const battlesData = battlesRes.ok ? await battlesRes.json() : { battles: [] };
@@ -410,14 +442,15 @@
     const rows = battles.map(b => {
       const date = (b.date_time || '').slice(0, 16).replace('T', ' ');
       const resCls = resultCls[b.result] ?? '';
-      const resLabel = resultLabel[b.result] ?? b.result;
+      const resLabel = esc(resultLabel[b.result] ?? b.result);
       return `<tr id="battle-row-${b.id}">
-        <td style="color:var(--text-muted);font-size:12px">${date}</td>
-        <td class="sticky-l" style="min-width:160px"><div class="player-name">${b.map_name}</div></td>
+        <td style="color:var(--text-muted);font-size:12px">${esc(date)}</td>
+        <td class="sticky-l" style="min-width:160px"><div class="player-name">${esc(b.map_name)}</div></td>
         <td>${resCls ? `<span class="${resCls}">${resLabel}</span>` : resLabel}</td>
         <td style="color:var(--text-muted)">${b.player_count} игроков</td>
-        <td style="color:var(--text-dim);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${b.filename}</td>
-        <td><button class="btn-remove" title="Удалить бой" onclick="removeBattle(${b.id})">✕</button></td>
+        <td>${b.mine ? '<span class="tag-mine">мой</span>' : ''}</td>
+        <td style="color:var(--text-dim);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(b.filename)}</td>
+        <td>${b.mine ? `<button class="btn-remove" data-delete-battle="${b.id}" title="Удалить бой из своей истории">✕</button>` : ''}</td>
       </tr>`;
     }).join('');
 
@@ -429,6 +462,7 @@
           <th class="sticky-l">Карта</th>
           <th>Результат</th>
           <th>Игроков</th>
+          <th>Мои</th>
           <th>Файл</th>
           <th></th>
         </tr></thead>
@@ -437,36 +471,52 @@
     </div>`;
   }
 
-  async function removeBattle(id) {
-    if (!confirm('Удалить этот бой из базы?')) return;
-    const res = await fetch(`/api/battles/${id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${_token}` },
-    });
-    if (res.ok) {
-      load();
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.detail ?? 'Ошибка удаления');
-    }
+  function renderHidden(hidden) {
+    if (!hidden.length) return '';
+    return `<div class="hidden-bar">
+      <span class="hidden-label">Скрыто из аналитики:</span>
+      ${hidden.map(n => `<button class="chip" data-show="${esc(n)}" title="Вернуть в аналитику">${esc(n)} <span>вернуть</span></button>`).join('')}
+    </div>`;
   }
 
-  async function removePlayer(name) {
-    if (!confirm(`Убрать «${name}» из базы?`)) return;
-    const res = await fetch(`/api/players/${encodeURIComponent(name)}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${_token}` },
-    });
-    if (res.ok) {
-      load();
-    } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data.detail ?? 'Ошибка удаления');
-    }
+  async function fail(res) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.detail ?? `Ошибка ${res.status}`);
   }
+
+  async function removeBattle(id) {
+    if (!confirm('Удалить этот бой из своей истории?')) return;
+    const res = await api(`/api/battles/${id}`, { method: 'DELETE' });
+    res.ok ? load() : fail(res);
+  }
+
+  async function hidePlayer(name) {
+    if (!confirm(`Скрыть «${name}» из аналитики? Данные боёв останутся в базе.`)) return;
+    const res = await api('/api/players/hidden', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    res.ok ? load() : fail(res);
+  }
+
+  async function restorePlayer(name) {
+    const res = await api(`/api/players/hidden/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    res.ok ? load() : fail(res);
+  }
+
+  // One delegated listener: the container survives every re-render.
+  document.getElementById('content').addEventListener('click', e => {
+    const hide = e.target.closest('[data-hide]');
+    if (hide) return hidePlayer(hide.dataset.hide);
+    const show = e.target.closest('[data-show]');
+    if (show) return restorePlayer(show.dataset.show);
+    const del = e.target.closest('[data-delete-battle]');
+    if (del) return removeBattle(Number(del.dataset.deleteBattle));
+  });
 
   load().catch(err => {
-    document.getElementById('content').innerHTML = `<div class="empty-state"><strong>Ошибка загрузки</strong>${err.message}</div>`;
+    document.getElementById('content').innerHTML = `<div class="empty-state"><strong>Ошибка загрузки</strong>${esc(err.message)}</div>`;
   });
 </script>
 </body>
