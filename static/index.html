@@ -8,32 +8,77 @@
 <meta name="theme-color" content="#0d1117" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Oswald:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/static/app.css" />
 <style>
   /* drop zone */
   .dropzone {
-    border: 1.5px dashed var(--border);
-    background: radial-gradient(760px 190px at 50% -40%, rgba(31,111,235,0.09), transparent 62%), var(--surface);
-    border-radius: 12px; padding: 26px 24px;
-    display: flex; align-items: center; gap: 24px; margin-bottom: 24px;
+    border: 1px dashed var(--border-strong);
+    background: var(--surface);
+    border-radius: var(--radius); padding: 20px;
+    display: flex; align-items: center; gap: 20px; margin-bottom: 16px;
     transition: border-color 0.15s, background 0.15s; cursor: pointer;
   }
-  .dropzone:hover, .dropzone.dragover { border-color: var(--accent); }
-  .dropzone.dragover { background: radial-gradient(760px 190px at 50% -40%, rgba(31,111,235,0.18), transparent 62%), var(--surface); }
+  .dropzone:hover, .dropzone.dragover { border-color: var(--accent); background: var(--surface-2); }
+  .dropzone.dragover { border-style: solid; }
   .dropzone-icon {
-    width: 52px; height: 52px; border-radius: 12px;
-    background: var(--surface-3); border: 1px solid var(--border);
+    width: 46px; height: 46px;
+    background: var(--surface-3); border: 1px solid var(--border-strong);
     display: grid; place-items: center; color: var(--accent-hover); flex-shrink: 0;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
   }
   .dropzone-body { flex: 1; min-width: 0; }
-  .dropzone-title { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .dropzone-title {
+    font-family: var(--font-display); font-size: 16px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 4px;
+  }
   .dropzone-sub { font-size: 13px; color: var(--text-muted); margin: 0; }
   .dropzone-sub code {
-    font-family: var(--font-mono); background: var(--surface-3);
-    border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px;
-    font-size: 11.5px; color: var(--text);
+    font-family: var(--font-mono); background: var(--bg);
+    border: 1px solid var(--border); padding: 1px 6px; border-radius: 1px;
+    font-size: 11.5px; color: var(--accent-hover);
   }
+
+  /* live database strip */
+  .db-strip {
+    display: flex; align-items: center; gap: 0; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--border-muted);
+    border-left: 2px solid var(--accent);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 0 16px; margin-bottom: 16px;
+  }
+  .db-item { display: flex; align-items: baseline; gap: 8px; padding: 12px 18px 12px 0; }
+  .db-item + .db-item { padding-left: 18px; border-left: 1px solid var(--border-muted); }
+  .db-key {
+    font-family: var(--font-display); font-size: 10.5px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.1em;
+  }
+  .db-val { font-family: var(--font-display); font-size: 17px; font-weight: 500; }
+  .db-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .db-link {
+    margin-left: auto; font-family: var(--font-display); font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--accent-hover); text-decoration: none; white-space: nowrap;
+  }
+  .db-link:hover { text-decoration: underline; }
+
+  /* first-run guide, replaced by the tables as soon as anything is loaded */
+  .intro { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 22px; }
+  /* a class with display beats the browser default for [hidden] */
+  .intro[hidden], .db-strip[hidden] { display: none; }
+  .intro-step {
+    display: flex; gap: 14px; padding: 15px 16px;
+    background: var(--surface); border: 1px solid var(--border-muted); border-radius: var(--radius);
+  }
+  .intro-num {
+    font-family: var(--font-display); font-size: 26px; font-weight: 600;
+    color: var(--accent); opacity: 0.6; line-height: 1;
+  }
+  .intro-step strong {
+    display: block; font-family: var(--font-display); font-size: 13px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px;
+  }
+  .intro-step p { margin: 0; font-size: 12.5px; color: var(--text-muted); line-height: 1.45; }
   .dropzone-actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
   #file-input { display: none; }
 
@@ -41,25 +86,27 @@
   .save-bar {
     display: flex; align-items: center; justify-content: space-between; gap: 14px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px;
+    border-left: 2px solid var(--accent);
+    border-radius: 0 var(--radius) var(--radius) 0; padding: 12px 16px; margin-bottom: 16px;
   }
   .save-bar-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .save-check {
     display: flex; align-items: center; gap: 7px; font-size: 12px;
-    color: var(--text-muted); cursor: pointer; user-select: none;
-    background: var(--surface-2); border: 1px solid var(--border-muted);
-    border-radius: 999px; padding: 4px 12px 4px 10px;
+    color: var(--text-muted); cursor: pointer; user-select: none; font-family: var(--font-mono);
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 4px 10px;
   }
-  .save-check:hover { border-color: var(--border); color: var(--text); }
+  .save-check:hover { border-color: var(--border-strong); color: var(--text); }
   .save-check input[type=checkbox] { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
   .save-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
-  .save-status { font-size: 12px; color: var(--text-muted); }
+  .save-status { font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); }
 
   /* loading */
   .spinner-card {
     background: var(--surface); border: 1px solid var(--border-muted); border-radius: var(--radius);
-    padding: 32px; align-items: center; justify-content: center;
-    gap: 16px; color: var(--text-muted); font-size: 13px; display: none;
+    padding: 30px; align-items: center; justify-content: center; gap: 14px;
+    color: var(--text-dim); font-family: var(--font-display); font-size: 13px;
+    text-transform: uppercase; letter-spacing: 0.1em; display: none; margin-bottom: 16px;
   }
   .spinner-card.visible { display: flex; }
 
@@ -67,10 +114,13 @@
   table.stats thead th { padding: 0; height: 64px; }
   table.stats thead th.sticky-l, table.stats thead th.sticky-r { padding: 0 16px; }
   .b-head { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 10px; min-width: 84px; }
-  .b-map { color: var(--text); font-size: 11px; font-weight: 500; font-family: var(--font); }
-  .b-idx { color: var(--text-dim); font-size: 9.5px; font-family: var(--font-mono); }
+  .b-map {
+    color: var(--text-muted); font-size: 11px; font-family: var(--font);
+    text-transform: none; letter-spacing: 0;   /* map names are proper nouns, not labels */
+  }
+  .b-idx { color: var(--heat-none); font-size: 9.5px; font-family: var(--font-mono); }
   .b-vehicle {
-    color: var(--accent-hover); font-size: 9.5px; font-family: var(--font); font-weight: 500;
+    color: var(--accent); font-size: 9.5px; font-family: var(--font-mono);
     max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .col-head { display: block; padding: 0 4px; }
@@ -89,13 +139,14 @@
   td.frag-3 { color: var(--heat-high); font-weight: 700; }
   td.frag-4 { color: var(--heat-top); font-weight: 700; background: var(--heat-top-bg); }
 
-  td.sticky-r .avg-val { font-size: 14px; }
+  td.sticky-r .avg-val { font-size: 14px; color: var(--accent-hover); }
   td.sticky-r .avg-sub {
     display: block; color: var(--text-muted); font-size: 10px;
     font-weight: 400; font-family: var(--font-mono); margin-top: 1px;
   }
 
   @media (max-width: 900px) {
+    .intro { grid-template-columns: 1fr; }
     .dropzone { flex-direction: column; align-items: stretch; gap: 14px; }
     .dropzone-actions .btn { width: 100%; }
     .save-bar { flex-direction: column; align-items: stretch; }
@@ -138,6 +189,8 @@
     </div>
   </header>
 
+  <section class="db-strip" id="db-strip" hidden></section>
+
   <section class="dropzone" id="dropzone">
     <div class="dropzone-icon">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -154,6 +207,30 @@
       <button class="btn btn-primary" id="btn-pick">Выбрать файлы</button>
     </div>
     <input type="file" id="file-input" multiple accept=".mtreplay">
+  </section>
+
+  <section class="intro" id="intro">
+    <div class="intro-step">
+      <span class="intro-num">01</span>
+      <div>
+        <strong>Кидай реплеи</strong>
+        <p>Файлы <code>.mtreplay</code> из папки реплеев. Можно всю папку разом — она уйдёт частями.</p>
+      </div>
+    </div>
+    <div class="intro-step">
+      <span class="intro-num">02</span>
+      <div>
+        <strong>Смотри разбор</strong>
+        <p>Урон, ассист, броня, фраги и точность по каждому бою. На диск сервера ничего не пишется.</p>
+      </div>
+    </div>
+    <div class="intro-step">
+      <span class="intro-num">03</span>
+      <div>
+        <strong>Отмечай нужное</strong>
+        <p>В базу уйдут только отмеченные бои. Они и попадут в накопленную аналитику.</p>
+      </div>
+    </div>
   </section>
 
   <div class="spinner-card" id="loading">
@@ -223,6 +300,41 @@
   let _metric = localStorage.getItem('sb_metric');
   if (!METRICS[_metric]) _metric = 'damage';
 
+  // What is already in the database, so the first screen is not an empty page.
+  async function loadDbStrip() {
+    try {
+      const res = await api('/api/analytics/totals');
+      if (!res.ok) return;
+      const t = await res.json();
+      const total = Number(t.total_battles ?? 0);
+      if (!total) return;
+      const wins = Number(t.wins ?? 0);
+      const wr = Math.round(wins / total * 100);
+      const from = String(t.first_battle ?? '').slice(0, 10);
+      const to = String(t.last_battle ?? '').slice(0, 10);
+      document.getElementById('db-strip').innerHTML = `
+        <div class="db-item">
+          <span class="db-key">В базе</span>
+          <span class="db-val">${total}</span>
+          <span class="db-sub">${plural(total, 'бой', 'боя', 'боёв')}</span>
+        </div>
+        <div class="db-item">
+          <span class="db-key">Побед</span>
+          <span class="db-val" style="color:var(--win)">${wr}%</span>
+          <span class="db-sub">${wins} из ${total}</span>
+        </div>
+        <div class="db-item">
+          <span class="db-key">Период</span>
+          <span class="db-sub">${esc(from)} — ${esc(to)}</span>
+        </div>
+        <a class="db-link" href="/analytics">Открыть аналитику →</a>`;
+      document.getElementById('db-strip').hidden = false;
+    } catch (e) {
+      /* the strip is a nicety: an upload page without it still works */
+    }
+  }
+  loadDbStrip();
+
   const _username = localStorage.getItem('sb_username') ?? '';
   if (_username) {
     document.getElementById('user-name').textContent = _username;
@@ -248,9 +360,11 @@
   function heatClass(val, colMax) {
     if (!val) return 'heat-none';
     const r = val / colMax;
+    // Brass is reserved for values within a tenth of the column best, so the
+    // highlight means something on columns where everyone clusters near the top.
     if (r < 0.25) return 'heat-low';
-    if (r < 0.55) return 'heat-mid';
-    if (r < 0.85) return 'heat-high';
+    if (r < 0.60) return 'heat-mid';
+    if (r < 0.90) return 'heat-high';
     return 'heat-top';
   }
   function fmtFrags(v) {
@@ -313,6 +427,7 @@
 
     loading.classList.add('visible');
     loadingText.textContent = 'Парсим реплеи…';
+    document.getElementById('intro').hidden = true;
     mainContent.hidden = true;
     saveBar.hidden = true;
     alertsEl.innerHTML = '';
@@ -466,25 +581,25 @@
     const drawPct = Math.round(draws  / total * 100);
 
     summaryEl.innerHTML = `
-      <div class="stat-card">
-        <div class="label"><span class="dot neutral"></span> Боёв</div>
+      <div class="stat-card is-accent bracketed">
+        <div class="label">Боёв</div>
         <div class="value">${total}</div>
         <div class="delta">${plural(total, 'реплей', 'реплея', 'реплеев')} загружено</div>
       </div>
-      <div class="stat-card">
-        <div class="label"><span class="dot win"></span> Победы</div>
+      <div class="stat-card is-win bracketed">
+        <div class="label">Победы</div>
         <div class="value" style="color:var(--win)">${wins}</div>
         <div class="delta"><strong>${winPct}%</strong> побед</div>
         <div class="bar bar-win"><span style="width:${winPct}%"></span></div>
       </div>
-      <div class="stat-card">
-        <div class="label"><span class="dot loss"></span> Поражения</div>
+      <div class="stat-card is-loss bracketed">
+        <div class="label">Поражения</div>
         <div class="value" style="color:var(--loss)">${losses}</div>
         <div class="delta"><strong>${lossPct}%</strong> поражений</div>
         <div class="bar bar-loss"><span style="width:${lossPct}%"></span></div>
       </div>
-      <div class="stat-card">
-        <div class="label"><span class="dot draw"></span> Ничьи</div>
+      <div class="stat-card is-draw bracketed">
+        <div class="label">Ничьи</div>
         <div class="value" style="color:var(--draw)">${draws}</div>
         <div class="delta"><strong>${drawPct}%</strong> ничьих</div>
         <div class="bar bar-draw"><span style="width:${drawPct}%"></span></div>

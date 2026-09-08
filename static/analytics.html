@@ -8,18 +8,25 @@
 <meta name="theme-color" content="#0d1117" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Oswald:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/static/app.css" />
 <style>
   .hidden-bar {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     background: var(--surface); border: 1px solid var(--border-muted);
-    border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px;
+    border-left: 2px solid var(--border-strong);
+    border-radius: 0 var(--radius) var(--radius) 0; padding: 11px 14px; margin-bottom: 16px;
   }
-  .hidden-label { font-size: 12px; color: var(--text-muted); }
+  .hidden-label {
+    font-family: var(--font-display); font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.09em;
+  }
   .filter-group { display: flex; align-items: center; gap: 8px; }
-  .filter-label { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
-  .vehicle-name { font-size: 11.5px; color: var(--text-muted); }
+  .filter-label {
+    font-family: var(--font-display); font-size: 11px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.09em; white-space: nowrap;
+  }
+  .vehicle-name { font-size: 11.5px; color: var(--text-muted); font-family: var(--font-mono); }
   .cell-date { color: var(--text-muted); font-size: 12px; }
   .cell-file {
     color: var(--text-dim); font-size: 11px; max-width: 220px;
@@ -124,9 +131,11 @@
   function heatClass(val, max) {
     if (!val) return 'heat-none';
     const r = val / max;
+    // Brass is reserved for values within a tenth of the column best, so the
+    // highlight means something on columns where everyone clusters near the top.
     if (r < 0.25) return 'heat-low';
-    if (r < 0.55) return 'heat-mid';
-    if (r < 0.85) return 'heat-high';
+    if (r < 0.60) return 'heat-mid';
+    if (r < 0.90) return 'heat-high';
     return 'heat-top';
   }
 
@@ -217,29 +226,29 @@
       ? `${esc(String(totals.first_battle).slice(0, 10))} — ${esc(String(totals.last_battle).slice(0, 10))}`
       : '';
     return `<div class="summary cols-5">
-      <div class="stat-card">
-        <div class="label"><span class="dot neutral"></span> Боёв в базе</div>
+      <div class="stat-card is-accent bracketed">
+        <div class="label">Боёв в базе</div>
         <div class="value">${total}</div>
         <div class="delta">${range}</div>
       </div>
-      <div class="stat-card">
-        <div class="label"><span class="dot win"></span> Победы</div>
+      <div class="stat-card is-win bracketed">
+        <div class="label">Победы</div>
         <div class="value" style="color:var(--win)">${wins}</div>
         <div class="delta"><strong>${wr}%</strong> побед</div>
         <div class="bar bar-win"><span style="width:${wr}%"></span></div>
       </div>
-      <div class="stat-card">
-        <div class="label"><span class="dot loss"></span> Поражения</div>
+      <div class="stat-card is-loss bracketed">
+        <div class="label">Поражения</div>
         <div class="value" style="color:var(--loss)">${losses}</div>
         <div class="delta"><strong>${lr}%</strong> поражений</div>
         <div class="bar bar-loss"><span style="width:${lr}%"></span></div>
       </div>
-      <div class="stat-card">
-        <div class="label"><span class="dot draw"></span> Ничьи</div>
+      <div class="stat-card is-draw bracketed">
+        <div class="label">Ничьи</div>
         <div class="value" style="color:var(--draw)">${draws}</div>
         <div class="delta">${total ? Math.round(draws / total * 100) : 0}%</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card bracketed">
         <div class="label">Игроков</div>
         <div class="value">${playerCount}</div>
         <div class="delta">уникальных</div>

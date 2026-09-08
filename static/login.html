@@ -8,100 +8,150 @@
 <meta name="theme-color" content="#0d1117" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&family=Oswald:wght@400;500;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/static/app.css" />
 <style>
   body {
     min-height: 100vh; display: grid; place-items: center; padding: 24px;
-    background:
-      radial-gradient(900px 460px at 50% -12%, rgba(31, 111, 235, 0.16), transparent 62%),
-      var(--bg);
   }
-  .card {
-    width: 100%; max-width: 380px;
+  /* A wider plate than a lone card: identity on the left, the form on the right. */
+  .plate {
+    width: 100%; max-width: 720px;
+    display: grid; grid-template-columns: 1fr 300px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 14px; padding: 30px 28px 26px;
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+    border-radius: var(--radius);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
   }
-  .card-brand { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 24px; }
-  .card-brand .brand-title { font-size: 24px; }
-  .card-brand .brand-sub { text-align: center; }
 
-  .tabs { display: flex; gap: 3px; padding: 3px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 22px; }
+  .plate-side {
+    padding: 30px 28px; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 22px;
+    background:
+      linear-gradient(180deg, rgba(200, 146, 47, 0.05), transparent 45%),
+      var(--surface-2);
+  }
+  .plate-brand { display: flex; align-items: center; gap: 12px; }
+  .plate-brand .brand-title { font-size: 25px; }
+
+  .pitch { font-size: 13px; color: var(--text-muted); line-height: 1.55; margin: 0; }
+  .pitch b { color: var(--text); font-weight: 500; }
+
+  .facts { display: flex; flex-direction: column; gap: 10px; margin-top: auto; }
+  .fact { display: flex; align-items: baseline; gap: 10px; }
+  .fact dt {
+    font-family: var(--font-display); font-size: 10.5px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.1em; white-space: nowrap;
+  }
+  .fact dd {
+    margin: 0; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted);
+    border-bottom: 1px dashed var(--border); flex: 1;
+  }
+
+  .plate-form { padding: 30px 28px; display: flex; flex-direction: column; }
+  /* the form stretches so the button lines up with the bottom of the left panel */
+  #auth-form { display: flex; flex-direction: column; flex: 1; }
+
+  .tabs {
+    display: flex; gap: 2px; padding: 2px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 20px;
+  }
   .tabs button {
-    flex: 1; font-family: inherit; font-size: 13px; font-weight: 500;
-    padding: 8px 0; border: 0; border-radius: var(--radius-sm);
+    flex: 1; font-family: var(--font-display); font-size: 12px; font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.07em;
+    padding: 8px 0; border: 0; border-radius: 1px;
     background: transparent; color: var(--text-muted); cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
   .tabs button:hover { color: var(--text); }
-  .tabs button[aria-selected="true"] { background: var(--accent); color: #fff; }
+  .tabs button[aria-selected="true"] { background: var(--accent); color: #17120a; }
 
-  .field { margin-bottom: 16px; }
+  .field { margin-bottom: 14px; }
   .field label {
-    display: block; font-size: 11px; color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 0.07em; font-weight: 500; margin-bottom: 6px;
+    display: block; font-family: var(--font-display); font-size: 10.5px; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.11em; margin-bottom: 6px;
   }
   .field input {
     width: 100%; background: var(--bg); border: 1px solid var(--border);
-    color: var(--text); font-family: inherit; font-size: 14px;
+    color: var(--text); font-family: var(--font-mono); font-size: 13.5px;
     padding: 10px 12px; border-radius: var(--radius-sm);
     transition: border-color 0.12s, box-shadow 0.12s;
   }
   .field input:focus {
     outline: none; border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.2);
+    box-shadow: 0 0 0 3px rgba(200, 146, 47, 0.16);
   }
-  .field input::placeholder { color: var(--text-dim); }
+  .field input::placeholder { color: var(--heat-none); }
 
-  .hint { font-size: 11.5px; color: var(--text-dim); margin: -8px 0 18px; }
+  .hint { font-size: 11.5px; color: var(--text-dim); margin: -4px 0 14px; }
 
   .error {
     display: none; background: var(--loss-bg); border: 1px solid var(--loss-border);
-    color: var(--loss); font-size: 12.5px; padding: 9px 12px;
-    border-radius: var(--radius-sm); margin-bottom: 16px;
+    border-left-width: 2px; color: var(--loss); font-size: 12.5px; padding: 9px 12px;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin-bottom: 14px;
   }
   .error.visible { display: block; }
 
-  .card .btn-primary { width: 100%; padding: 11px 16px; font-size: 14px; }
+  .plate-form .btn-primary { width: 100%; padding: 12px 16px; font-size: 14px; margin-top: auto; }
+
+  @media (max-width: 680px) {
+    .plate { grid-template-columns: 1fr; max-width: 380px; }
+    .plate-side { border-right: 0; border-bottom: 1px solid var(--border); padding: 24px 22px; }
+    .facts { display: none; }
+    .plate-form { padding: 24px 22px; }
+  }
 </style>
 </head>
 <body>
-<main class="card">
-  <div class="card-brand">
-    <span class="brand-mark">
-      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <circle cx="12" cy="12" r="8" stroke="#fff" stroke-width="1.5" opacity="0.95"/>
-        <circle cx="12" cy="12" r="2" fill="#fff"/>
-        <path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-    </span>
-    <span class="brand-text" style="align-items:center">
-      <span class="brand-title">Stats<span class="accent">Battle</span></span>
-      <span class="brand-sub">Мир Танков · статистика по реплеям</span>
-    </span>
-  </div>
-
-  <div class="tabs" role="tablist">
-    <button type="button" role="tab" id="tab-login" data-mode="login" aria-selected="true">Войти</button>
-    <button type="button" role="tab" id="tab-register" data-mode="register" aria-selected="false">Регистрация</button>
-  </div>
-
-  <div id="error-msg" class="error" role="alert"></div>
-
-  <form id="auth-form" novalidate>
-    <div class="field">
-      <label for="username">Имя пользователя</label>
-      <input type="text" id="username" name="username" autocomplete="username" placeholder="nickname" />
+<main class="plate bracketed">
+  <section class="plate-side">
+    <div class="plate-brand">
+      <span class="brand-mark">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6"/>
+          <circle cx="12" cy="12" r="2" fill="currentColor"/>
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-title">Stats<span class="accent">Battle</span></span>
+        <span class="brand-sub">Мир Танков</span>
+      </span>
     </div>
-    <div class="field">
-      <label for="password">Пароль</label>
-      <input type="password" id="password" name="password" autocomplete="current-password" placeholder="••••••" />
-    </div>
-    <p class="hint" id="hint" hidden>От 3 символов в имени, от 6 — в пароле.</p>
 
-    <button class="btn btn-primary" id="submit-btn" type="submit">Войти</button>
-  </form>
+    <p class="pitch">
+      Разбор реплеев <b>.mtreplay</b> по взводу и клану: урон, ассист, заблокированное,
+      фраги и точность — по каждому бою и в среднем за всё время.
+    </p>
+
+    <dl class="facts">
+      <div class="fact"><dt>Формат</dt><dd>.mtreplay</dd></div>
+      <div class="fact"><dt>Метрик</dt><dd>8 на игрока</dd></div>
+      <div class="fact"><dt>Файлы</dt><dd>на диск не пишутся</dd></div>
+    </dl>
+  </section>
+
+  <section class="plate-form">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tab-login" data-mode="login" aria-selected="true">Войти</button>
+      <button type="button" role="tab" id="tab-register" data-mode="register" aria-selected="false">Регистрация</button>
+    </div>
+
+    <div id="error-msg" class="error" role="alert"></div>
+
+    <form id="auth-form" novalidate>
+      <div class="field">
+        <label for="username">Имя пользователя</label>
+        <input type="text" id="username" name="username" autocomplete="username" placeholder="nickname" />
+      </div>
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" placeholder="••••••" />
+      </div>
+      <p class="hint" id="hint" hidden>От 3 символов в имени, от 6 — в пароле.</p>
+
+      <button class="btn btn-primary" id="submit-btn" type="submit">Войти</button>
+    </form>
+  </section>
 </main>
 
 <script>

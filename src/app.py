@@ -382,6 +382,13 @@ def remove_hidden_player(name: str, user: dict = Depends(require_user)):
 
 # --- Analytics ---
 
+@app.get("/api/analytics/totals")
+def analytics_totals(mine: bool = False, user: dict = Depends(require_user)):
+    """Just the counters, for the header strip on the upload page."""
+    require_db()
+    return get_db_totals(user["id"] if mine else None)
+
+
 @app.get("/api/analytics/summary")
 def analytics_summary(
     mine: bool = False,
