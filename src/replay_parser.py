@@ -8,7 +8,10 @@ from dataclasses import dataclass
 # .mtreplay magic bytes (first 4 bytes of file)
 _MT_MAGIC = bytes([0x12, 0x32, 0x34, 0x11])
 
-_MAP_NAMES: dict[str, str] = {
+# A replay block is JSON metadata; anything above a few MB is malformed or hostile.
+_MAX_BLOCK_SIZE = 32 * 1024 * 1024
+
+MAP_NAMES: dict[str, str] = {
     "01_karelia":           "Карелия",
     "02_malinovka":         "Малиновка",
     "04_himmelsdorf":       "Химмельсдорф",
@@ -20,7 +23,7 @@ _MAP_NAMES: dict[str, str] = {
     "13_erlenberg":         "Эрленберг",
     "14_siegfried_line":    "Линия Зигфрида",
     "18_cliff":             "Утёс",
-    "28_desert":            "Песчанаая река",
+    "28_desert":            "Песчаная река",
     "34_redshire":          "Редшир",
     "35_steppes":           "Степи",
     "36_fishing_bay":       "Рыбацкая бухта",
@@ -31,15 +34,21 @@ _MAP_NAMES: dict[str, str] = {
     "60_asia_miao":         "Жемчужная река",
     "90_minsk":             "Минск",
     "127_japort":           "Старая гавань",
-    "503_kaliningrad":      "Каллининград",
+    "503_kaliningrad":      "Калининград",
+}
+
+# Display names that earlier versions wrote into the database with typos.
+MAP_NAME_FIXES: dict[str, str] = {
+    "Песчанаая река": "Песчаная река",
+    "Каллининград":   "Калининград",
 }
 
 
 def _map_display(internal: str) -> str:
     """Translate internal map ID to display name, fall back to cleaned-up ID."""
-    if internal in _MAP_NAMES:
-        return _MAP_NAMES[internal]
-    # Strip leading number: "05_prohorovka" → "Prohorovka"
+    if internal in MAP_NAMES:
+        return MAP_NAMES[internal]
+    # Strip leading number: "05_prohorovka" -> "Prohorovka"
     cleaned = re.sub(r'^\d+_', '', internal).replace("_", " ").title()
     return cleaned or internal
 
@@ -85,17 +94,31 @@ def _read_blocks_mt(data: bytes) -> tuple[bytes, bytes | None]:
         raise ValueError("File too small")
     num_blocks = struct.unpack_from("<I", data, 4)[0]
     size1 = struct.unpack_from("<I", data, 8)[0]
-    block1 = data[12 : 12 + size1]
+    if size1 > _MAX_BLOCK_SIZE or 12 + size1 > len(data):
+        raise ValueError("Corrupt replay: metadata block size out of range")
+    block1 = data[12:12 + size1]
+
     block2 = None
     if num_blocks >= 2:
         off = 12 + size1
+        if off + 4 > len(data):
+            raise ValueError("Corrupt replay: truncated before results block")
         size2 = struct.unpack_from("<I", data, off)[0]
-        block2 = data[off + 4 : off + 4 + size2]
+        if size2 > _MAX_BLOCK_SIZE or off + 4 + size2 > len(data):
+            raise ValueError("Corrupt replay: results block size out of range")
+        block2 = data[off + 4:off + 4 + size2]
     return block1, block2
 
 
+def _load_json(raw: bytes, what: str):
+    try:
+        return json.loads(raw.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Corrupt replay: {what} is not valid JSON ({e.msg})") from e
+
+
 def _vehicle_name(raw: str) -> str:
-    """'ussr:R231_Object_278' → 'Object 278'"""
+    """'ussr:R231_Object_278' -> 'Object 278'"""
     if not raw:
         return ""
     name = raw.split(":")[-1]
@@ -110,16 +133,29 @@ def _make_battle_hash(players: list["PlayerResult"], map_name: str) -> str:
     return hashlib.md5(key.encode()).hexdigest()
 
 
-def parse_replay(path: str | Path) -> BattleResult:
-    data = Path(path).read_bytes()
-    filename = Path(path).name
+def _as_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
+
+def parse_replay(path: str | Path) -> BattleResult:
+    """Parse a .mtreplay file from disk."""
+    path = Path(path)
+    return parse_replay_bytes(path.read_bytes(), path.name)
+
+
+def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
+    """Parse .mtreplay contents already held in memory."""
     if data[:4] != _MT_MAGIC:
         raise ValueError("Not a valid .mtreplay file (wrong magic bytes)")
 
     block1_raw, block2_raw = _read_blocks_mt(data)
 
-    meta: dict = json.loads(block1_raw.decode("utf-8", errors="replace"))
+    meta = _load_json(block1_raw, "metadata block")
+    if not isinstance(meta, dict):
+        raise ValueError("Corrupt replay: metadata block is not an object")
 
     map_internal: str = meta.get("mapName") or ""
     map_name: str = _map_display(map_internal) if map_internal else (meta.get("mapDisplayName") or "Unknown")
@@ -127,13 +163,15 @@ def parse_replay(path: str | Path) -> BattleResult:
     player_name: str = meta.get("playerName", "")
 
     # meta vehicles: {arena_vehicle_id: {name, vehicleType, team, ...}}
-    meta_vehicles: dict = meta.get("vehicles", {})
+    meta_vehicles: dict = meta.get("vehicles") or {}
+    if not isinstance(meta_vehicles, dict):
+        meta_vehicles = {}
 
     player_team = 0
     player_vehicle = ""
     for v in meta_vehicles.values():
         if isinstance(v, dict) and v.get("name") == player_name:
-            player_team = v.get("team", 0)
+            player_team = _as_int(v.get("team"))
             player_vehicle = _vehicle_name(v.get("vehicleType", ""))
             break
 
@@ -143,7 +181,7 @@ def parse_replay(path: str | Path) -> BattleResult:
             PlayerResult(
                 name=v.get("name", ""),
                 vehicle=_vehicle_name(v.get("vehicleType", "")),
-                team=v.get("team", 0),
+                team=_as_int(v.get("team")),
                 damage_dealt=0,
                 damage_received=0,
                 blocked=0,
@@ -159,12 +197,11 @@ def parse_replay(path: str | Path) -> BattleResult:
             if isinstance(v, dict)
         ]
         players.sort(key=lambda p: (p.team, -p.damage_dealt))
-        battle_hash = _make_battle_hash(players, map_internal)
         return BattleResult(
             filename=filename,
             map_name=map_name,
             date_time=date_time,
-            battle_hash=battle_hash,
+            battle_hash=_make_battle_hash(players, map_internal),
             winner_team=0,
             player_team=player_team,
             player_vehicle=player_vehicle,
@@ -172,66 +209,57 @@ def parse_replay(path: str | Path) -> BattleResult:
         )
 
     # block2 is a JSON list: [results_dict, players_dict, frags_dict]
-    block2: list = json.loads(block2_raw.decode("utf-8", errors="replace"))
+    block2 = _load_json(block2_raw, "results block")
+    if not isinstance(block2, list) or not block2:
+        raise ValueError("Corrupt replay: results block has an unexpected shape")
 
-    results: dict = block2[0] if isinstance(block2, list) and block2 else {}
+    results: dict = block2[0] if isinstance(block2[0], dict) else {}
     # players_info has name, vehicleType, team, isAlive per arena_vehicle_id
-    players_info: dict = block2[1] if len(block2) > 1 else {}
+    players_info: dict = block2[1] if len(block2) > 1 and isinstance(block2[1], dict) else {}
 
-    common: dict = results.get("common", {})
-    winner_team: int = common.get("winnerTeam", 0)
+    common: dict = results.get("common") or {}
+    winner_team: int = _as_int(common.get("winnerTeam"))
 
-    # vehicles has full stats per arena_vehicle_id → list with one dict
-    res_vehicles: dict = results.get("vehicles", {})
+    # vehicles has full stats per arena_vehicle_id -> list with one dict
+    res_vehicles: dict = results.get("vehicles") or {}
 
     players: list[PlayerResult] = []
 
     for vid, v_list in res_vehicles.items():
-        if not isinstance(v_list, list) or not v_list:
+        if not isinstance(v_list, list) or not v_list or not isinstance(v_list[0], dict):
             continue
         v: dict = v_list[0]
 
         # Name and vehicle type from players_info (more reliable than meta for final state)
-        pinfo: dict = players_info.get(vid, {}) or meta_vehicles.get(vid, {})
+        pinfo = players_info.get(vid) or meta_vehicles.get(vid) or {}
+        if not isinstance(pinfo, dict):
+            pinfo = {}
         name: str = pinfo.get("name") or pinfo.get("fakeName") or f"id:{vid}"
         vehicle: str = _vehicle_name(pinfo.get("vehicleType", ""))
-
-        team: int = v.get("team", 0)
-        damage_dealt: int = v.get("damageDealt", 0)
-        damage_received: int = v.get("damageReceived", 0)
-        blocked: int = v.get("damageBlockedByArmor", 0)
-        assists: int = v.get("damageAssistedRadio", 0) + v.get("damageAssistedTrack", 0)
-        frags: int = v.get("kills", 0)
-        xp: int = v.get("xp", 0)
-        survived: bool = v.get("deathReason", -1) == -1
-        shots: int = v.get("shots", 0)
-        hits: int = v.get("directHits", 0)
-        piercings: int = v.get("piercings", 0)
 
         players.append(PlayerResult(
             name=name,
             vehicle=vehicle,
-            team=team,
-            damage_dealt=damage_dealt,
-            damage_received=damage_received,
-            blocked=blocked,
-            assists=assists,
-            frags=frags,
-            xp=xp,
-            survived=survived,
-            shots=shots,
-            hits=hits,
-            piercings=piercings,
+            team=_as_int(v.get("team")),
+            damage_dealt=_as_int(v.get("damageDealt")),
+            damage_received=_as_int(v.get("damageReceived")),
+            blocked=_as_int(v.get("damageBlockedByArmor")),
+            assists=_as_int(v.get("damageAssistedRadio")) + _as_int(v.get("damageAssistedTrack")),
+            frags=_as_int(v.get("kills")),
+            xp=_as_int(v.get("xp")),
+            survived=v.get("deathReason", -1) == -1,
+            shots=_as_int(v.get("shots")),
+            hits=_as_int(v.get("directHits")),
+            piercings=_as_int(v.get("piercings")),
         ))
 
     players.sort(key=lambda p: (p.team, -p.damage_dealt))
-    battle_hash = _make_battle_hash(players, map_internal)
 
     return BattleResult(
         filename=filename,
         map_name=map_name,
         date_time=date_time,
-        battle_hash=battle_hash,
+        battle_hash=_make_battle_hash(players, map_internal),
         winner_team=winner_team,
         player_team=player_team,
         player_vehicle=player_vehicle,

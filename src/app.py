@@ -3,35 +3,34 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import threading
+import time
 import traceback
-from fastapi import FastAPI, UploadFile, File, Header, HTTPException
-from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
-import tempfile
+from fastapi.staticfiles import StaticFiles
 
-from replay_parser import parse_replay
+import config
+import database
+from auth import create_token, decode_token, hash_password, verify_password
 from database import (
-    init_db, save_battle,
-    get_player_summary, get_map_summary, get_vehicle_summary, get_db_totals,
-    create_user, get_user_by_username, delete_player,
-    get_battles_list, delete_battle,
+    create_user, delete_battle, get_battles_list, get_db_totals, get_hidden_players,
+    get_map_summary, get_player_summary, get_user_by_username, get_vehicle_summary,
+    hide_player, init_db, save_battle, unhide_player,
 )
-from auth import hash_password, verify_password, create_token, decode_token
-
-app = FastAPI(title="StatsBattle")
+from replay_parser import parse_replay_bytes
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 _DB_AVAILABLE = False
 
 
-@app.on_event("startup")
-def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global _DB_AVAILABLE
-    import os
-    url = os.environ.get("DATABASE_URL", "")
-    print(f"[DB] DATABASE_URL set: {bool(url)}, prefix: {url[:20] if url else 'none'}")
+    print(f"[DB] DATABASE_URL set: {bool(config.DATABASE_URL)}")
     try:
         init_db()
         _DB_AVAILABLE = True
@@ -39,22 +38,74 @@ def startup():
     except Exception as e:
         print(f"[DB] init failed: {e}")
         traceback.print_exc()
+    yield
+    database.close_pool()
 
 
-def _get_current_user(authorization: str | None) -> dict | None:
+app = FastAPI(title="StatsBattle", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+# --- Auth helpers ---
+
+def _current_user(authorization: str | None) -> dict | None:
     if not authorization or not authorization.startswith("Bearer "):
         return None
     payload = decode_token(authorization.split(" ", 1)[1])
     if not payload:
         return None
-    return {"id": int(payload["sub"]), "username": payload["username"]}
+    try:
+        return {"id": int(payload["sub"]), "username": payload["username"]}
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
-def require_auth(authorization: str | None = Header(default=None)) -> dict:
-    user = _get_current_user(authorization)
+def require_user(authorization: str | None = Header(default=None)) -> dict:
+    """FastAPI dependency: the signed-in user, or 401."""
+    user = _current_user(authorization)
     if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        raise HTTPException(401, "Not authenticated")
     return user
+
+
+def require_db() -> None:
+    if not _DB_AVAILABLE:
+        raise HTTPException(503, "Database unavailable")
+
+
+# --- Login throttling ---
+# In-memory and therefore per-instance: enough to blunt online password guessing
+# on a single-container deployment, not a substitute for a real rate limiter.
+
+_login_failures: dict[tuple[str, str], list[float]] = {}
+_login_lock = threading.Lock()
+
+
+def _throttle_key(request: Request, username: str) -> tuple[str, str]:
+    client = request.client.host if request.client else "unknown"
+    return (client, username.lower())
+
+
+def _check_login_allowed(key: tuple[str, str]) -> None:
+    cutoff = time.monotonic() - config.LOGIN_LOCKOUT_SECONDS
+    with _login_lock:
+        recent = [t for t in _login_failures.get(key, []) if t > cutoff]
+        if recent:
+            _login_failures[key] = recent
+        else:
+            _login_failures.pop(key, None)
+        if len(recent) >= config.LOGIN_MAX_ATTEMPTS:
+            raise HTTPException(429, "Too many failed attempts, try again later")
+
+
+def _record_login_failure(key: tuple[str, str]) -> None:
+    with _login_lock:
+        _login_failures.setdefault(key, []).append(time.monotonic())
+
+
+def _clear_login_failures(key: tuple[str, str]) -> None:
+    with _login_lock:
+        _login_failures.pop(key, None)
 
 
 def battle_to_dict(b) -> dict:
@@ -90,99 +141,173 @@ def battle_to_dict(b) -> dict:
 
 # --- Pages ---
 
-@app.get("/")
+@app.get("/", include_in_schema=False)
 def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
 
-@app.get("/analytics")
+
+@app.get("/analytics", include_in_schema=False)
 def analytics():
     return FileResponse(str(STATIC_DIR / "analytics.html"))
 
-@app.get("/login")
+
+@app.get("/login", include_in_schema=False)
 def login_page():
     return FileResponse(str(STATIC_DIR / "login.html"))
+
+
+@app.get("/healthz")
+def healthz():
+    """Liveness plus a database round-trip, for the platform health check."""
+    db_ok = False
+    if _DB_AVAILABLE:
+        try:
+            db_ok = database.ping()
+        except Exception:
+            db_ok = False
+    status = 200 if db_ok else 503
+    return JSONResponse({"status": "ok" if db_ok else "degraded", "database": db_ok}, status_code=status)
 
 
 # --- Auth endpoints ---
 
 @app.post("/api/auth/register")
-def register(body: dict):
-    if not _DB_AVAILABLE:
-        raise HTTPException(503, "Database unavailable")
+def register(body: dict, request: Request):
+    require_db()
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
-    if len(username) < 3:
-        raise HTTPException(400, "Username must be at least 3 characters")
+    if not 3 <= len(username) <= 32:
+        raise HTTPException(400, "Username must be 3 to 32 characters")
     if len(password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
     user = create_user(username, hash_password(password))
     if not user:
         raise HTTPException(409, "Username already taken")
+    _clear_login_failures(_throttle_key(request, username))
     return {"token": create_token(user["id"], user["username"]), "username": user["username"]}
 
 
 @app.post("/api/auth/login")
-def login(body: dict):
-    if not _DB_AVAILABLE:
-        raise HTTPException(503, "Database unavailable")
+def login(body: dict, request: Request):
+    require_db()
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
+    key = _throttle_key(request, username)
+    _check_login_allowed(key)
+
     user = get_user_by_username(username)
     if not user or not verify_password(password, user["password_hash"]):
+        _record_login_failure(key)
         raise HTTPException(401, "Invalid username or password")
+
+    _clear_login_failures(key)
     return {"token": create_token(user["id"], user["username"]), "username": user["username"]}
 
 
 @app.get("/api/auth/me")
-def me(authorization: str | None = Header(default=None)):
-    user = _get_current_user(authorization)
-    if not user:
-        raise HTTPException(401, "Not authenticated")
+def me(user: dict = Depends(require_user)):
     return user
 
 
 # --- Upload ---
 
+async def _read_limited(upload: UploadFile, limit: int) -> bytes:
+    """Read an upload into memory, refusing anything past `limit` bytes."""
+    chunks, size = [], 0
+    while chunk := await upload.read(1 << 20):
+        size += len(chunk)
+        if size > limit:
+            raise ValueError(f"File is larger than {limit // (1024 * 1024)} MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @app.post("/api/upload")
 async def upload_replays(
     files: list[UploadFile] = File(...),
-    authorization: str | None = Header(default=None),
+    user: dict = Depends(require_user),
 ):
-    results, errors = [], []
+    if len(files) > config.MAX_FILES_PER_UPLOAD:
+        raise HTTPException(413, f"Too many files (max {config.MAX_FILES_PER_UPLOAD} per upload)")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        for upload in files:
-            if not upload.filename.endswith(".mtreplay"):
-                errors.append({"file": upload.filename, "error": "Not a .mtreplay file"})
-                continue
-            dest = tmp_path / upload.filename
-            dest.write_bytes(await upload.read())
-            try:
-                battle = parse_replay(dest)
-                results.append(battle_to_dict(battle))
-            except Exception as e:
-                errors.append({"file": upload.filename, "error": str(e)})
+    results, errors = [], []
+    budget = config.MAX_UPLOAD_SIZE
+
+    for i, upload in enumerate(files):
+        name = upload.filename or "unnamed"
+        if not name.lower().endswith(".mtreplay"):
+            errors.append({"file": name, "error": "Not a .mtreplay file"})
+            continue
+        try:
+            data = await _read_limited(upload, min(config.MAX_FILE_SIZE, budget))
+            budget -= len(data)
+            # The client-supplied name is metadata only; nothing is ever written to disk.
+            results.append(battle_to_dict(parse_replay_bytes(data, Path(name).name)))
+        except ValueError as e:
+            errors.append({"file": name, "error": str(e)})
+        except Exception as e:
+            traceback.print_exc()
+            errors.append({"file": name, "error": f"Failed to parse: {e}"})
+        if budget <= 0 and i < len(files) - 1:
+            errors.append({"file": "...", "error": "Upload size limit reached, remaining files skipped"})
+            break
 
     results.sort(key=lambda r: r["date_time"], reverse=True)
     return {"battles": results, "errors": errors}
 
 
+# Fields save_battle() needs, and the type each is coerced to before it reaches SQL.
+_BATTLE_FIELDS = {
+    "filename": str, "map_name": str, "date_time": str, "battle_hash": str,
+    "result": str, "player_team": int, "winner_team": int,
+}
+_PLAYER_FIELDS = {
+    "name": str, "vehicle": str, "team": int, "damage_dealt": int, "damage_received": int,
+    "blocked": int, "assists": int, "frags": int, "xp": int, "survived": bool,
+    "shots": int, "hits": int, "piercings": int,
+}
+_MAX_TEXT = 200
+
+
+def _coerce(value, kind):
+    if kind is bool:
+        return bool(value)
+    if kind is int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+    return str(value or "")[:_MAX_TEXT]
+
+
+def _clean_battle(raw) -> dict:
+    """Rebuild a battle payload from scratch so only known, typed fields reach the database."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("players"), list):
+        raise HTTPException(400, "Malformed battle payload")
+    battle = {k: _coerce(raw.get(k), kind) for k, kind in _BATTLE_FIELDS.items()}
+    if not battle["battle_hash"]:
+        raise HTTPException(400, "Battle is missing battle_hash")
+    if battle["result"] not in ("win", "loss", "draw"):
+        raise HTTPException(400, "Battle result must be win, loss or draw")
+    battle["players"] = [
+        {k: _coerce(p.get(k), kind) for k, kind in _PLAYER_FIELDS.items()}
+        for p in raw["players"] if isinstance(p, dict)
+    ]
+    return battle
+
+
 @app.post("/api/battles/save")
-def save_battles(
-    body: dict,
-    authorization: str | None = Header(default=None),
-):
-    if not _DB_AVAILABLE:
-        raise HTTPException(503, "Database unavailable")
-    user = _get_current_user(authorization)
+def save_battles(body: dict, user: dict = Depends(require_user)):
+    require_db()
     battles = body.get("battles", [])
     if not isinstance(battles, list):
         raise HTTPException(400, "battles must be a list")
+    if len(battles) > config.MAX_FILES_PER_UPLOAD:
+        raise HTTPException(413, "Too many battles in one request")
+
     saved, skipped = 0, 0
-    for d in battles:
-        is_new = save_battle(d, user_id=user["id"] if user else None)
-        if is_new:
+    for raw in battles:
+        if save_battle(_clean_battle(raw), user_id=user["id"]):
             saved += 1
         else:
             skipped += 1
@@ -192,62 +317,62 @@ def save_battles(
 # --- Battle management ---
 
 @app.get("/api/battles")
-def list_battles(
-    mine: bool = False,
-    authorization: str | None = Header(default=None),
-):
-    if not _DB_AVAILABLE:
-        raise HTTPException(503, "Database unavailable")
-    user = _get_current_user(authorization)
-    user_id = user["id"] if (mine and user) else None
-    try:
-        return {"battles": get_battles_list(user_id)}
-    except Exception as e:
-        traceback.print_exc()
-        return JSONResponse({"error": str(e)}, status_code=500)
+def list_battles(mine: bool = False, user: dict = Depends(require_user)):
+    require_db()
+    viewer_id = user["id"]
+    return {"battles": get_battles_list(viewer_id if mine else None, viewer_id=viewer_id)}
 
 
 @app.delete("/api/battles/{battle_id}")
-def remove_battle(battle_id: int, authorization: str | None = Header(default=None)):
-    if not _DB_AVAILABLE:
-        raise HTTPException(503, "Database unavailable")
-    require_auth(authorization)
-    if not delete_battle(battle_id):
-        raise HTTPException(404, "Battle not found")
-    return {"deleted": battle_id}
+def remove_battle(battle_id: int, user: dict = Depends(require_user)):
+    require_db()
+    outcome = delete_battle(battle_id, user["id"])
+    if outcome == "not_found":
+        raise HTTPException(404, "Battle not found among your uploads")
+    return {"battle_id": battle_id, "outcome": outcome}
 
 
-# --- Player management ---
+# --- Hidden players ---
 
-@app.delete("/api/players/{name}")
-def remove_player(name: str, authorization: str | None = Header(default=None)):
-    if not _DB_AVAILABLE:
-        raise HTTPException(503, "Database unavailable")
-    require_auth(authorization)
-    count = delete_player(name)
-    if count == 0:
-        raise HTTPException(404, "Player not found")
-    return {"deleted": count}
+@app.get("/api/players/hidden")
+def list_hidden_players(user: dict = Depends(require_user)):
+    require_db()
+    return {"hidden": get_hidden_players(user["id"])}
+
+
+@app.post("/api/players/hidden")
+def add_hidden_player(body: dict, user: dict = Depends(require_user)):
+    require_db()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    hide_player(user["id"], name)
+    return {"hidden": name}
+
+
+@app.delete("/api/players/hidden/{name}")
+def remove_hidden_player(name: str, user: dict = Depends(require_user)):
+    require_db()
+    if not unhide_player(user["id"], name):
+        raise HTTPException(404, "Player is not hidden")
+    return {"restored": name}
 
 
 # --- Analytics ---
 
-
 @app.get("/api/analytics/summary")
-def analytics_summary(
-    mine: bool = False,
-    authorization: str | None = Header(default=None),
-):
+def analytics_summary(mine: bool = False, user: dict = Depends(require_user)):
     if not _DB_AVAILABLE:
         return JSONResponse({"error": "database_unavailable"}, status_code=503)
-    user = _get_current_user(authorization)
-    user_id = user["id"] if (mine and user) else None
+    viewer_id = user["id"]
+    scope_id = viewer_id if mine else None
     try:
         return {
-            "totals":   get_db_totals(user_id),
-            "players":  get_player_summary(user_id),
-            "maps":     get_map_summary(user_id),
-            "vehicles": get_vehicle_summary(user_id),
+            "totals":   get_db_totals(scope_id),
+            "players":  get_player_summary(scope_id, viewer_id=viewer_id),
+            "maps":     get_map_summary(scope_id),
+            "vehicles": get_vehicle_summary(scope_id, viewer_id=viewer_id),
+            "hidden":   get_hidden_players(viewer_id),
         }
     except Exception as e:
         traceback.print_exc()

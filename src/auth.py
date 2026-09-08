@@ -1,26 +1,37 @@
-import os
 import bcrypt
 import jwt
 from datetime import datetime, timedelta, timezone
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-please-change")
+from config import SECRET_KEY, TOKEN_TTL_DAYS
+
 _ALGORITHM = "HS256"
-_EXPIRE_DAYS = 30
+# bcrypt only reads the first 72 bytes of a password and newer releases reject
+# anything longer instead of truncating, so truncate here for both paths.
+_BCRYPT_MAX_BYTES = 72
+
+
+def _pw_bytes(password: str) -> bytes:
+    return password.encode()[:_BCRYPT_MAX_BYTES]
 
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(_pw_bytes(password), bcrypt.gensalt()).decode()
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
+    try:
+        return bcrypt.checkpw(_pw_bytes(password), hashed.encode())
+    except ValueError:
+        # Malformed hash in the DB — treat as a failed login, not a 500.
+        return False
 
 
 def create_token(user_id: int, username: str) -> str:
     payload = {
         "sub": str(user_id),
         "username": username,
-        "exp": datetime.now(timezone.utc) + timedelta(days=_EXPIRE_DAYS),
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(days=TOKEN_TTL_DAYS),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=_ALGORITHM)
 

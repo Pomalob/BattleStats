@@ -1,42 +1,45 @@
-"""
-Clear all data from the database.
-Usage: DATABASE_URL=<url> python scripts/clear_db.py [--users]
+"""Clear data from the database.
 
-By default keeps users, only clears battles/stats.
-Pass --users to also drop all user accounts.
+Usage:
+    DATABASE_URL=<url> python scripts/clear_db.py [--users] [--yes]
+
+By default keeps user accounts and only clears battles and stats.
+Pass --users to drop the accounts too.
 """
-import os
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
 import psycopg2
 
-def get_conn():
-    url = os.environ.get("DATABASE_URL", "")
-    if not url:
-        sys.exit("ERROR: DATABASE_URL not set")
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://"):]
-    if "sslmode" not in url:
-        url += ("&" if "?" in url else "?") + "sslmode=require"
-    return psycopg2.connect(url)
+from config import DATABASE_URL
+from database import build_dsn
 
 
 def main():
     drop_users = "--users" in sys.argv
-
-    conn = get_conn()
-    cur = conn.cursor()
-
+    tables = "user_battles, hidden_players, player_stats, battles"
     if drop_users:
-        cur.execute("TRUNCATE user_battles, player_stats, battles, users RESTART IDENTITY CASCADE")
-        print("Cleared: user_battles, player_stats, battles, users")
-    else:
-        cur.execute("TRUNCATE user_battles, player_stats, battles RESTART IDENTITY CASCADE")
-        print("Cleared: user_battles, player_stats, battles  (users kept)")
+        tables += ", users"
 
-    conn.commit()
-    cur.close()
+    if "--yes" not in sys.argv:
+        target = DATABASE_URL.rsplit("@", 1)[-1] or "(unset)"
+        print(f"About to TRUNCATE {tables}")
+        print(f"on {target}")
+        if input("Type 'yes' to continue: ").strip().lower() != "yes":
+            sys.exit("Aborted.")
+
+    try:
+        conn = psycopg2.connect(build_dsn(DATABASE_URL))
+    except RuntimeError as e:
+        sys.exit(f"ERROR: {e}")
+
+    with conn, conn.cursor() as cur:
+        cur.execute(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
     conn.close()
-    print("Done.")
+
+    print(f"Cleared: {tables}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,77 @@
+"""Builds synthetic .mtreplay files so the parser can be tested without real game data."""
+import json
+import struct
+
+MAGIC = bytes([0x12, 0x32, 0x34, 0x11])
+
+
+def _block(payload) -> bytes:
+    raw = json.dumps(payload).encode("utf-8")
+    return struct.pack("<I", len(raw)) + raw
+
+
+def build_replay(
+    *,
+    map_name: str = "05_prohorovka",
+    date_time: str = "2025-01-02 20:15:33",
+    player_name: str = "Alice",
+    winner_team: int = 1,
+    players: list[dict] | None = None,
+    with_results: bool = True,
+) -> bytes:
+    """Assemble a replay from a compact player spec.
+
+    Each player dict accepts: name, team, vehicle_type, damage, received, blocked,
+    assist_radio, assist_track, kills, xp, shots, hits, piercings, death_reason.
+    """
+    players = players if players is not None else [
+        {"name": "Alice", "team": 1, "vehicle_type": "ussr:R231_Object_278", "damage": 2400,
+         "kills": 3, "shots": 10, "hits": 8, "piercings": 6},
+        {"name": "Bob", "team": 1, "vehicle_type": "germany:G100_Maus", "damage": 1200,
+         "blocked": 3000, "kills": 1},
+        {"name": "Carol", "team": 2, "vehicle_type": "usa:A80_T110E5", "damage": 900,
+         "kills": 0, "death_reason": 0},
+    ]
+
+    meta_vehicles = {
+        str(i + 1): {
+            "name": p["name"],
+            "vehicleType": p.get("vehicle_type", "ussr:R231_Object_278"),
+            "team": p.get("team", 1),
+        }
+        for i, p in enumerate(players)
+    }
+    meta = {
+        "mapName": map_name,
+        "dateTime": date_time,
+        "playerName": player_name,
+        "vehicles": meta_vehicles,
+    }
+
+    data = MAGIC + struct.pack("<I", 2 if with_results else 1) + _block(meta)
+    if not with_results:
+        return MAGIC + struct.pack("<I", 1) + _block(meta)
+
+    res_vehicles = {
+        str(i + 1): [{
+            "team": p.get("team", 1),
+            "damageDealt": p.get("damage", 0),
+            "damageReceived": p.get("received", 0),
+            "damageBlockedByArmor": p.get("blocked", 0),
+            "damageAssistedRadio": p.get("assist_radio", 0),
+            "damageAssistedTrack": p.get("assist_track", 0),
+            "kills": p.get("kills", 0),
+            "xp": p.get("xp", 0),
+            "shots": p.get("shots", 0),
+            "directHits": p.get("hits", 0),
+            "piercings": p.get("piercings", 0),
+            "deathReason": p.get("death_reason", -1),
+        }]
+        for i, p in enumerate(players)
+    }
+    results = [
+        {"common": {"winnerTeam": winner_team}, "vehicles": res_vehicles},
+        meta_vehicles,
+        {},
+    ]
+    return data + _block(results)
