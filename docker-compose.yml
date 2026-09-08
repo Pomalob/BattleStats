@@ -1,0 +1,36 @@
+# Local development stack: the app plus a throwaway Postgres.
+#   docker compose up --build   ->  http://localhost:8000
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: battlestats
+      POSTGRES_PASSWORD: battlestats
+      POSTGRES_DB: battlestats
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U battlestats"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://battlestats:battlestats@db:5432/battlestats
+      SECRET_KEY: local-development-secret-key-0000000
+      ENV: development
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./static:/app/static
+
+volumes:
+  pgdata:
