@@ -91,21 +91,21 @@ class BattleResult:
 def _read_blocks_mt(data: bytes) -> tuple[bytes, bytes | None]:
     """Parse .mtreplay: magic(4) | num_blocks(4) | size1(4) | block1 | size2(4) | block2"""
     if len(data) < 12:
-        raise ValueError("File too small")
+        raise ValueError("Файл слишком маленький")
     num_blocks = struct.unpack_from("<I", data, 4)[0]
     size1 = struct.unpack_from("<I", data, 8)[0]
     if size1 > _MAX_BLOCK_SIZE or 12 + size1 > len(data):
-        raise ValueError("Corrupt replay: metadata block size out of range")
+        raise ValueError("Битый реплей: размер блока метаданных вне диапазона")
     block1 = data[12:12 + size1]
 
     block2 = None
     if num_blocks >= 2:
         off = 12 + size1
         if off + 4 > len(data):
-            raise ValueError("Corrupt replay: truncated before results block")
+            raise ValueError("Битый реплей: файл обрывается перед блоком результатов")
         size2 = struct.unpack_from("<I", data, off)[0]
         if size2 > _MAX_BLOCK_SIZE or off + 4 + size2 > len(data):
-            raise ValueError("Corrupt replay: results block size out of range")
+            raise ValueError("Битый реплей: размер блока результатов вне диапазона")
         block2 = data[off + 4:off + 4 + size2]
     return block1, block2
 
@@ -114,7 +114,7 @@ def _load_json(raw: bytes, what: str):
     try:
         return json.loads(raw.decode("utf-8", errors="replace"))
     except json.JSONDecodeError as e:
-        raise ValueError(f"Corrupt replay: {what} is not valid JSON ({e.msg})") from e
+        raise ValueError(f"Битый реплей: {what} — некорректный JSON ({e.msg})") from e
 
 
 def _vehicle_name(raw: str) -> str:
@@ -149,13 +149,13 @@ def parse_replay(path: str | Path) -> BattleResult:
 def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
     """Parse .mtreplay contents already held in memory."""
     if data[:4] != _MT_MAGIC:
-        raise ValueError("Not a valid .mtreplay file (wrong magic bytes)")
+        raise ValueError("Не похоже на .mtreplay: неверная сигнатура файла")
 
     block1_raw, block2_raw = _read_blocks_mt(data)
 
-    meta = _load_json(block1_raw, "metadata block")
+    meta = _load_json(block1_raw, "блок метаданных")
     if not isinstance(meta, dict):
-        raise ValueError("Corrupt replay: metadata block is not an object")
+        raise ValueError("Битый реплей: блок метаданных не является объектом")
 
     map_internal: str = meta.get("mapName") or ""
     map_name: str = _map_display(map_internal) if map_internal else (meta.get("mapDisplayName") or "Unknown")
@@ -209,9 +209,9 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
         )
 
     # block2 is a JSON list: [results_dict, players_dict, frags_dict]
-    block2 = _load_json(block2_raw, "results block")
+    block2 = _load_json(block2_raw, "блок результатов")
     if not isinstance(block2, list) or not block2:
-        raise ValueError("Corrupt replay: results block has an unexpected shape")
+        raise ValueError("Битый реплей: неожиданная структура блока результатов")
 
     results: dict = block2[0] if isinstance(block2[0], dict) else {}
     # players_info has name, vehicleType, team, isAlive per arena_vehicle_id

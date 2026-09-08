@@ -7,407 +7,138 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/app.css" />
 <style>
-  :root {
-    --bg: #0d1117;
-    --bg-elev: #010409;
-    --surface: #161b22;
-    --surface-2: #1c232c;
-    --surface-3: #21262d;
-    --border: #30363d;
-    --border-muted: #21262d;
-    --text: #e6edf3;
-    --text-muted: #7d8590;
-    --text-dim: #484f58;
-    --win: #3fb950;
-    --win-bg: rgba(63, 185, 80, 0.12);
-    --win-border: rgba(63, 185, 80, 0.35);
-    --loss: #f85149;
-    --loss-bg: rgba(248, 81, 73, 0.12);
-    --loss-border: rgba(248, 81, 73, 0.35);
-    --draw: #8b949e;
-    --draw-bg: rgba(139, 148, 158, 0.12);
-    --gold: #e3b341;
-    --gold-surface: #1d2025;
-    --gold-surface-hover: #232529;
-    --gold-surface-head: #23262b;
-    --accent: #1f6feb;
-    --accent-hover: #388bfd;
-    --heat-low: #6e7681;
-    --heat-mid: #e6edf3;
-    --heat-high: #58a6ff;
-    --heat-top: #3fb950;
-  }
-
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 14px;
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-  }
-  .mono { font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace; font-variant-numeric: tabular-nums; }
-
-  .page { max-width: 1440px; margin: 0 auto; padding: 24px 28px 64px; }
-
-  /* header */
-  .header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 0 20px; border-bottom: 1px solid var(--border-muted); margin-bottom: 24px;
-  }
-  .brand { display: flex; align-items: center; gap: 14px; }
-  .brand-mark {
-    width: 40px; height: 40px; border-radius: 8px;
-    background: linear-gradient(135deg, #1f6feb 0%, #0d3a8e 100%);
-    display: grid; place-items: center;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset, 0 2px 8px rgba(0,0,0,0.4);
-  }
-  .brand-text { display: flex; flex-direction: column; line-height: 1.1; }
-  .brand-title { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
-  .brand-title .accent { color: var(--accent); }
-  .brand-sub { font-size: 12px; color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase; margin-top: 3px; }
-  .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
-  .session-pill {
-    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px;
-    border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
-    color: var(--text); font-size: 12px;
-  }
-  .session-pill::before {
-    content: ""; width: 6px; height: 6px; border-radius: 50%;
-    background: var(--win); box-shadow: 0 0 8px var(--win);
-  }
-  .session-pill.idle::before { background: var(--text-dim); box-shadow: none; }
-
   /* drop zone */
   .dropzone {
     border: 1.5px dashed var(--border);
-    background: radial-gradient(800px 200px at 50% -40%, rgba(31,111,235,0.08), transparent 60%), var(--surface);
-    border-radius: 12px; padding: 28px 24px;
+    background: radial-gradient(760px 190px at 50% -40%, rgba(31,111,235,0.09), transparent 62%), var(--surface);
+    border-radius: 12px; padding: 26px 24px;
     display: flex; align-items: center; gap: 24px; margin-bottom: 24px;
-    transition: border-color 0.15s; cursor: pointer;
+    transition: border-color 0.15s, background 0.15s; cursor: pointer;
   }
   .dropzone:hover, .dropzone.dragover { border-color: var(--accent); }
+  .dropzone.dragover { background: radial-gradient(760px 190px at 50% -40%, rgba(31,111,235,0.18), transparent 62%), var(--surface); }
   .dropzone-icon {
-    width: 56px; height: 56px; border-radius: 12px;
+    width: 52px; height: 52px; border-radius: 12px;
     background: var(--surface-3); border: 1px solid var(--border);
-    display: grid; place-items: center; color: var(--accent); flex-shrink: 0;
+    display: grid; place-items: center; color: var(--accent-hover); flex-shrink: 0;
   }
   .dropzone-body { flex: 1; min-width: 0; }
   .dropzone-title { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
   .dropzone-sub { font-size: 13px; color: var(--text-muted); margin: 0; }
   .dropzone-sub code {
-    font-family: 'JetBrains Mono', monospace; background: var(--surface-3);
+    font-family: var(--font-mono); background: var(--surface-3);
     border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px;
     font-size: 11.5px; color: var(--text);
   }
   .dropzone-actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
-  .btn-primary {
-    background: var(--accent); border: 1px solid rgba(255,255,255,0.08); color: #fff;
-    font-size: 13px; font-weight: 500; padding: 8px 16px; border-radius: 6px; cursor: pointer;
-    box-shadow: 0 0 0 1px rgba(31,111,235,0.4) inset; font-family: inherit;
-  }
-  .btn-primary:hover { background: var(--accent-hover); }
   #file-input { display: none; }
-
-  /* summary */
-  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
-  .stat-card {
-    background: var(--surface); border: 1px solid var(--border-muted);
-    border-radius: 10px; padding: 16px 18px;
-  }
-  .stat-card .label {
-    font-size: 11.5px; color: var(--text-muted); text-transform: uppercase;
-    letter-spacing: 0.06em; font-weight: 500; display: flex; align-items: center; gap: 6px;
-  }
-  .stat-card .value {
-    font-size: 30px; font-weight: 700; letter-spacing: -0.02em;
-    margin-top: 4px; line-height: 1.1; font-variant-numeric: tabular-nums;
-  }
-  .stat-card .delta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
-  .stat-card .delta strong { color: var(--text); font-weight: 500; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .dot.win  { background: var(--win);  box-shadow: 0 0 6px rgba(63,185,80,0.6); }
-  .dot.loss { background: var(--loss); box-shadow: 0 0 6px rgba(248,81,73,0.6); }
-  .dot.draw { background: var(--draw); }
-  .dot.neutral { background: var(--accent); box-shadow: 0 0 6px rgba(31,111,235,0.6); }
-  .stat-card .bar { height: 4px; background: var(--surface-3); border-radius: 2px; margin-top: 12px; overflow: hidden; }
-  .stat-card .bar > span { display: block; height: 100%; }
-  .bar-win  > span { background: var(--win); }
-  .bar-loss > span { background: var(--loss); }
-  .bar-draw > span { background: var(--draw); }
-
-  /* controls */
-  .controls {
-    background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px;
-    padding: 14px 18px; display: flex; align-items: center; gap: 28px; margin-bottom: 16px; flex-wrap: wrap;
-  }
-  .ctl-group { display: flex; flex-direction: column; gap: 6px; }
-  .ctl-label {
-    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
-    font-size: 11.5px; color: var(--text-muted); text-transform: uppercase;
-    letter-spacing: 0.06em; font-weight: 500;
-  }
-  .ctl-value {
-    color: var(--text); font-family: 'JetBrains Mono', monospace;
-    font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0;
-  }
-  .ctl-value .muted { color: var(--text-muted); }
-  .slider-wrap { width: 280px; display: flex; align-items: center; gap: 10px; }
-  .slider {
-    -webkit-appearance: none; appearance: none; flex: 1; height: 6px; border-radius: 3px;
-    background: linear-gradient(to right, var(--accent) 0%, var(--accent) 0%, var(--surface-3) 0%, var(--surface-3) 100%);
-    outline: none; cursor: pointer;
-  }
-  .slider::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%;
-    background: #fff; border: 3px solid var(--accent); cursor: grab; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-  }
-  .slider::-moz-range-thumb {
-    width: 16px; height: 16px; border-radius: 50%;
-    background: #fff; border: 3px solid var(--accent); cursor: grab;
-  }
-  .slider-tick { font-size: 10.5px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; }
-  .select-wrap { position: relative; }
-  .select {
-    appearance: none; -webkit-appearance: none; background: var(--surface-3);
-    border: 1px solid var(--border); color: var(--text); padding: 7px 32px 7px 12px;
-    border-radius: 6px; font-size: 13px; font-family: inherit; cursor: pointer; min-width: 220px;
-  }
-  .select:hover { border-color: #444c56; }
-  .select-wrap::after {
-    content: ""; position: absolute; right: 10px; top: 50%; width: 8px; height: 8px;
-    border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted);
-    transform: translateY(-70%) rotate(45deg); pointer-events: none;
-  }
-  .controls-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
-  .btn-secondary {
-    background: var(--surface-3); border: 1px solid var(--border); color: var(--text);
-    font-size: 13px; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-family: inherit;
-  }
-  .btn-secondary:hover { background: #2d333b; border-color: #444c56; }
-
-  /* alerts */
-  .alerts { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
-  .alert {
-    display: flex; gap: 12px; align-items: flex-start;
-    background: rgba(248,81,73,0.08); border: 1px solid var(--loss-border);
-    border-radius: 8px; padding: 12px 16px; font-size: 13px;
-  }
-  .alert-icon { color: var(--loss); flex-shrink: 0; margin-top: 1px; }
-  .alert-body { flex: 1; }
-  .alert-title { font-weight: 600; color: var(--loss); margin-bottom: 2px; }
-  .alert-text { color: var(--text); }
-  .alert-text code {
-    font-family: 'JetBrains Mono', monospace; background: rgba(0,0,0,0.3);
-    padding: 0 4px; border-radius: 3px; font-size: 12px;
-  }
-  .alert-dismiss {
-    background: transparent; border: 0; color: var(--text-muted);
-    cursor: pointer; padding: 0 4px; font-size: 18px; line-height: 1;
-  }
-  .alert-dismiss:hover { color: var(--text); }
-
-  /* table */
-  .table-card {
-    background: var(--surface); border: 1px solid var(--border-muted);
-    border-radius: 10px; overflow: hidden;
-  }
-  .table-meta {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 18px; border-bottom: 1px solid var(--border-muted);
-    font-size: 12.5px; color: var(--text-muted);
-  }
-  .table-meta strong { color: var(--text); font-weight: 600; }
-  .legend { display: flex; align-items: center; gap: 14px; font-size: 11.5px; }
-  .legend-item { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); }
-  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; }
-  .swatch-low  { background: var(--heat-low); }
-  .swatch-mid  { background: var(--heat-mid); }
-  .swatch-high { background: var(--heat-high); }
-  .swatch-top  { background: var(--heat-top); }
-  .table-scroll {
-    overflow-x: auto; overflow-y: visible;
-    scrollbar-color: var(--surface-3) var(--surface);
-  }
-  .table-scroll::-webkit-scrollbar { height: 10px; }
-  .table-scroll::-webkit-scrollbar-track { background: var(--surface); }
-  .table-scroll::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 5px; border: 2px solid var(--surface); }
-  .table-scroll::-webkit-scrollbar-thumb:hover { background: #3a414b; }
-
-  table.stats {
-    border-collapse: separate; border-spacing: 0; width: 100%;
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    font-size: 12.5px; font-variant-numeric: tabular-nums;
-  }
-  table.stats thead th {
-    background: var(--surface-2); color: var(--text-muted); font-weight: 500;
-    text-align: center; padding: 0; border-bottom: 1px solid var(--border);
-    height: 64px; vertical-align: middle; white-space: nowrap; font-size: 11px;
-  }
-  table.stats tbody td {
-    padding: 0 8px; height: 40px; text-align: center;
-    border-bottom: 1px solid var(--border-muted); color: var(--text); white-space: nowrap;
-  }
-  table.stats tbody tr:hover td { background: rgba(177,186,196,0.04); }
-  table.stats tbody tr:hover td.sticky-l { background: #1b212b; }
-  table.stats tbody tr:hover td.sticky-r { background: #1f2128; }
-  table.stats tbody tr:last-child td { border-bottom: 0; }
-
-  th.sticky-l, td.sticky-l {
-    position: sticky; left: 0; z-index: 3; text-align: left; padding: 0 16px;
-    min-width: 200px; max-width: 200px; border-right: 1px solid var(--border);
-    background: var(--surface); font-family: 'Inter', sans-serif;
-  }
-  th.sticky-l { background: var(--surface-2); z-index: 4; }
-  th.sticky-r, td.sticky-r {
-    position: sticky; right: 0; z-index: 3; min-width: 120px; max-width: 120px;
-    border-left: 1px solid var(--border); background: var(--gold-surface);
-    color: var(--gold); font-weight: 600; font-size: 14px;
-  }
-  th.sticky-r { background: var(--gold-surface-head); color: var(--gold); z-index: 4; }
-  table.stats tbody tr:hover td.sticky-r { background: var(--gold-surface-hover); }
-
-  .player { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
-  .player-avatar {
-    width: 28px; height: 28px; border-radius: 6px;
-    background: linear-gradient(135deg, #2d333b, #1c2129); border: 1px solid var(--border);
-    flex-shrink: 0; display: grid; place-items: center;
-    font-size: 10px; font-weight: 600; color: var(--text-muted); font-family: 'Inter', sans-serif;
-  }
-  .player-meta { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
-  .player-name { color: var(--text); font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
-  .player-battles { color: var(--text-muted); font-size: 10.5px; margin-top: 1px; font-family: 'JetBrains Mono', monospace; }
-
-  .b-head { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 10px; min-width: 80px; }
-  .b-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 28px; height: 18px; padding: 0 6px; border-radius: 4px;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.06em; font-family: 'JetBrains Mono', monospace;
-  }
-  .b-badge.win  { background: var(--win-bg);  color: var(--win);  border: 1px solid var(--win-border); }
-  .b-badge.loss { background: var(--loss-bg); color: var(--loss); border: 1px solid var(--loss-border); }
-  .b-badge.draw { background: var(--draw-bg); color: var(--draw); border: 1px solid rgba(139,148,158,0.35); }
-  .b-map { color: var(--text); font-size: 11px; font-weight: 500; font-family: 'Inter', sans-serif; }
-  .b-idx { color: var(--text-dim); font-size: 9.5px; font-family: 'JetBrains Mono', monospace; }
-  .b-vehicle { color: var(--accent); font-size: 9.5px; font-family: 'Inter', sans-serif; font-weight: 500; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  td.dmg { font-weight: 500; font-size: 13px; }
-  td.heat-none { color: var(--text-dim); font-size: 14px; }
-  td.heat-low  { color: var(--heat-low); }
-  td.heat-mid  { color: var(--heat-mid); }
-  td.heat-high { color: var(--heat-high); font-weight: 600; }
-  td.heat-top  { color: var(--heat-top); font-weight: 700; background: rgba(63,185,80,0.06); }
-
-  td.sticky-r .avg-val { font-size: 14px; }
-  td.sticky-r .avg-sub { display: block; color: var(--text-muted); font-size: 10px; font-weight: 400; font-family: 'JetBrains Mono', monospace; margin-top: 1px; }
-
-  .metric-tabs { display: flex; gap: 4px; }
-  .metric-btn {
-    background: var(--surface-3); border: 1px solid var(--border);
-    color: var(--text-muted); font-size: 11.5px; padding: 4px 10px;
-    border-radius: 5px; cursor: pointer; font-family: inherit; white-space: nowrap;
-    transition: color 0.1s, border-color 0.1s;
-  }
-  .metric-btn:hover { color: var(--text); border-color: #444c56; }
-  .metric-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-
-  .combo-top { display: block; font-size: 12.5px; }
-  .combo-bot { display: block; font-size: 10px; color: var(--text-muted); margin-top: 1px; }
-  td.cell-combo { height: auto; padding: 5px 8px; line-height: 1; }
-
-  td.frag-0 { color: var(--text-dim); }
-  td.frag-1 { color: var(--heat-low); }
-  td.frag-2 { color: var(--heat-mid); font-weight: 600; }
-  td.frag-3 { color: var(--heat-high); font-weight: 700; }
-  td.frag-4 { color: var(--heat-top); font-weight: 700; background: rgba(63,185,80,0.06); }
-
-  .empty-row td { text-align: center !important; padding: 32px !important; color: var(--text-muted); font-family: 'Inter', sans-serif; }
 
   /* save bar */
   .save-bar {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 10px; padding: 12px 16px; margin-bottom: 18px; gap: 12px;
+    border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px;
   }
   .save-bar-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .save-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer; user-select: none; }
-  .save-check input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
-  .save-status { font-size: 12px; color: var(--text-muted); }
-  .btn-save {
-    background: var(--accent); color: #fff; border: none; border-radius: 6px;
-    padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
-    font-family: inherit; white-space: nowrap; transition: background 0.15s;
+  .save-check {
+    display: flex; align-items: center; gap: 7px; font-size: 12px;
+    color: var(--text-muted); cursor: pointer; user-select: none;
+    background: var(--surface-2); border: 1px solid var(--border-muted);
+    border-radius: 999px; padding: 4px 12px 4px 10px;
   }
-  .btn-save:hover { background: var(--accent-hover); }
-  .btn-save:disabled { background: var(--surface-3); color: var(--text-dim); cursor: default; }
+  .save-check:hover { border-color: var(--border); color: var(--text); }
+  .save-check input[type=checkbox] { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
+  .save-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .save-status { font-size: 12px; color: var(--text-muted); }
 
   /* loading */
   .spinner-card {
-    background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px;
-    padding: 32px; display: flex; align-items: center; justify-content: center;
+    background: var(--surface); border: 1px solid var(--border-muted); border-radius: var(--radius);
+    padding: 32px; align-items: center; justify-content: center;
     gap: 16px; color: var(--text-muted); font-size: 13px; display: none;
   }
   .spinner-card.visible { display: flex; }
-  .spinner {
-    width: 22px; height: 22px; border-radius: 50%;
-    border: 2.5px solid var(--surface-3); border-top-color: var(--accent);
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .spinner-text strong { color: var(--text); font-weight: 600; }
 
-  /* narrow screens */
-  @media (max-width: 900px) {
-    .page { padding: 16px 14px 48px; }
-    .header { flex-direction: column; align-items: flex-start; gap: 12px; }
-    .header-right { flex-wrap: wrap; }
-    .dropzone { flex-direction: column; align-items: flex-start; gap: 14px; }
-    .dropzone-actions { width: 100%; }
-    .dropzone-actions .btn-primary { width: 100%; }
-    .summary { grid-template-columns: repeat(2, 1fr); }
-    .save-bar { flex-direction: column; align-items: stretch; gap: 12px; }
-    th.sticky-l, td.sticky-l { min-width: 148px; max-width: 148px; padding: 0 10px; }
+  /* battle column headers */
+  table.stats thead th { padding: 0; height: 64px; }
+  table.stats thead th.sticky-l, table.stats thead th.sticky-r { padding: 0 16px; }
+  .b-head { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 10px; min-width: 84px; }
+  .b-map { color: var(--text); font-size: 11px; font-weight: 500; font-family: var(--font); }
+  .b-idx { color: var(--text-dim); font-size: 9.5px; font-family: var(--font-mono); }
+  .b-vehicle {
+    color: var(--accent-hover); font-size: 9.5px; font-family: var(--font); font-weight: 500;
+    max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  @media (max-width: 520px) {
-    .summary { grid-template-columns: 1fr; }
-    .stat-card .value { font-size: 26px; }
-    .table-meta { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .col-head { display: block; padding: 0 4px; }
+
+  /* player cell */
+  .player-meta { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; padding: 6px 0; }
+
+  /* two-line cells */
+  .combo-top { display: block; font-size: 12.5px; }
+  .combo-bot { display: block; font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+  td.cell-combo { height: auto; padding: 6px 10px; line-height: 1.15; }
+
+  td.frag-0 { color: var(--heat-none); }
+  td.frag-1 { color: var(--heat-low); }
+  td.frag-2 { color: var(--heat-mid); font-weight: 600; }
+  td.frag-3 { color: var(--heat-high); font-weight: 700; }
+  td.frag-4 { color: var(--heat-top); font-weight: 700; background: var(--heat-top-bg); }
+
+  td.sticky-r .avg-val { font-size: 14px; }
+  td.sticky-r .avg-sub {
+    display: block; color: var(--text-muted); font-size: 10px;
+    font-weight: 400; font-family: var(--font-mono); margin-top: 1px;
+  }
+
+  @media (max-width: 900px) {
+    .dropzone { flex-direction: column; align-items: stretch; gap: 14px; }
+    .dropzone-actions .btn { width: 100%; }
+    .save-bar { flex-direction: column; align-items: stretch; }
+    .save-actions { justify-content: space-between; }
   }
 </style>
 </head>
 <body>
 <div class="page">
 
-  <header class="header">
-    <div class="brand">
-      <div class="brand-mark">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+  <header class="site-header">
+    <a class="brand" href="/">
+      <span class="brand-mark">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <circle cx="12" cy="12" r="8" stroke="#fff" stroke-width="1.5" opacity="0.95"/>
           <circle cx="12" cy="12" r="2" fill="#fff"/>
           <path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
-      </div>
-      <div class="brand-text">
-        <div class="brand-title">Stats<span class="accent">Battle</span></div>
-        <div class="brand-sub">Мир Танков &nbsp;·&nbsp; Replay Analyzer</div>
-      </div>
-    </div>
-    <div class="header-right">
-      <a href="/analytics" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:6px;font-size:13px;font-weight:500;color:var(--text-muted);text-decoration:none;border:1px solid var(--border);background:var(--surface);">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-title">Stats<span class="accent">Battle</span></span>
+        <span class="brand-sub">Мир Танков · Replay Analyzer</span>
+      </span>
+    </a>
+
+    <nav class="nav-links">
+      <a href="/" class="nav-link active">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Быстрый чек
+      </a>
+      <a href="/analytics" class="nav-link">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Аналитика
       </a>
-      <span class="session-pill idle" id="session-pill">Нет данных</span>
-      <button onclick="logout()" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;">Выйти</button>
+    </nav>
+
+    <div class="header-right">
+      <span class="user-pill idle" id="user-pill"><span id="user-name">—</span></span>
+      <button class="btn btn-ghost btn-sm" id="btn-logout">Выйти</button>
     </div>
   </header>
 
-  <section class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+  <section class="dropzone" id="dropzone">
     <div class="dropzone-icon">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
         <polyline points="17 8 12 3 7 8"/>
         <line x1="12" y1="3" x2="12" y2="15"/>
@@ -415,10 +146,10 @@
     </div>
     <div class="dropzone-body">
       <p class="dropzone-title">Перетащи реплеи или нажми для выбора</p>
-      <p class="dropzone-sub">Файлы <code>.mtreplay</code> из папки реплеев Мир Танков. Можно загружать любое количество.</p>
+      <p class="dropzone-sub">Файлы <code>.mtreplay</code> из папки реплеев Мир Танков. Разбор идёт на лету, в базу попадёт только то, что отметишь сам.</p>
     </div>
-    <div class="dropzone-actions" onclick="event.stopPropagation()">
-      <button class="btn-primary" onclick="document.getElementById('file-input').click()">Выбрать файлы</button>
+    <div class="dropzone-actions">
+      <button class="btn btn-primary" id="btn-pick">Выбрать файлы</button>
     </div>
     <input type="file" id="file-input" multiple accept=".mtreplay">
   </section>
@@ -428,17 +159,18 @@
     <div class="spinner-text">Парсим реплеи…</div>
   </div>
 
-  <div id="main-content" style="display:none">
+  <div id="main-content" hidden>
     <div class="summary" id="summary"></div>
     <div class="alerts" id="alerts"></div>
-    <div id="save-bar" style="display:none" class="save-bar">
+    <div class="save-bar" id="save-bar" hidden>
       <div class="save-bar-left" id="save-checks"></div>
-      <div style="display:flex;align-items:center;gap:10px">
+      <div class="save-actions">
         <span class="save-status" id="save-status"></span>
-        <button class="btn-save" id="btn-save" onclick="saveBattles()">Сохранить в базу</button>
+        <button class="btn btn-primary" id="btn-save">Сохранить в базу</button>
       </div>
     </div>
-    <div id="matrices"></div>
+    <div id="avg-table"></div>
+    <div id="metric-table"></div>
   </div>
 
 </div>
@@ -470,16 +202,29 @@
   const saveChecks  = document.getElementById('save-checks');
   const saveStatus  = document.getElementById('save-status');
   const btnSave     = document.getElementById('btn-save');
+  const alertsEl    = document.getElementById('alerts');
+  const avgEl       = document.getElementById('avg-table');
+  const metricEl    = document.getElementById('metric-table');
 
   let _parsedBattles = [];
-  const alertsEl    = document.getElementById('alerts');
-  const sessionPill = document.getElementById('session-pill');
-  const matricesEl  = document.getElementById('matrices');
+  let _rows = [];
+  let _battles = [];
 
-  // Show username
+  const METRICS = {
+    damage:   { sortKey: 'avgDamage',   title: 'Урон',        col: 'Ср. урон ↓' },
+    assists:  { sortKey: 'avgAssists',  title: 'Ассист',      col: 'Ср. ассист ↓' },
+    combo:    { sortKey: 'avgBlocked',  title: 'Броня',       col: 'Заблок ↓ / Получен' },
+    frags:    { sortKey: 'avgFrags',    title: 'Фраги',       col: 'Ср. фраги ↓' },
+    accuracy: { sortKey: 'accuracy',    title: 'Точность',    col: 'Точность ↓' },
+  };
+  let _metric = localStorage.getItem('sb_metric');
+  if (!METRICS[_metric]) _metric = 'damage';
+
   const _username = localStorage.getItem('sb_username') ?? '';
-  document.getElementById('session-pill').textContent = _username;
-  document.getElementById('session-pill').classList.remove('idle');
+  if (_username) {
+    document.getElementById('user-name').textContent = _username;
+    document.getElementById('user-pill').classList.remove('idle');
+  }
 
   function logout() {
     localStorage.removeItem('sb_token');
@@ -508,7 +253,17 @@
   function fmtFrags(v) {
     return v.toLocaleString('ru', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   }
+  function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
+  }
 
+  document.getElementById('btn-logout').addEventListener('click', logout);
+  document.getElementById('btn-save').addEventListener('click', saveBattles);
+  document.getElementById('btn-pick').addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
+  dropzone.addEventListener('click', () => fileInput.click());
   dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
   dropzone.addEventListener('drop', e => {
@@ -517,13 +272,24 @@
   });
   fileInput.addEventListener('change', () => uploadFiles(fileInput.files));
 
+  saveChecks.addEventListener('change', updateSaveBtn);
+
+  // The metric card is rebuilt on every switch, so listen on its stable container.
+  metricEl.addEventListener('click', e => {
+    const tab = e.target.closest('[data-metric]');
+    if (!tab || tab.dataset.metric === _metric) return;
+    _metric = tab.dataset.metric;
+    localStorage.setItem('sb_metric', _metric);
+    renderMetricCard();
+  });
+
   async function uploadFiles(files) {
     if (!files.length) return;
     const fd = new FormData();
     for (const f of files) fd.append('files', f);
     loading.classList.add('visible');
-    mainContent.style.display = 'none';
-    saveBar.style.display = 'none';
+    mainContent.hidden = true;
+    saveBar.hidden = true;
     alertsEl.innerHTML = '';
     _parsedBattles = [];
     try {
@@ -538,31 +304,34 @@
     }
   }
 
+  const WARN_ICON = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>
+    </svg>`;
+
+  function alertBox(title, body) {
+    return `<div class="alert">
+      <div class="alert-icon">${WARN_ICON}</div>
+      <div class="alert-body"><div class="alert-title">${title}</div><div class="alert-text">${body}</div></div>
+      <button class="alert-dismiss" onclick="this.closest('.alert').remove()" aria-label="Скрыть">×</button>
+    </div>`;
+  }
+
   function showAlert(title, text) {
-    alertsEl.innerHTML = `
-      <div class="alert">
-        <div class="alert-icon">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-            <line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>
-          </svg>
-        </div>
-        <div class="alert-body"><div class="alert-title">${esc(title)}</div><div class="alert-text">${esc(text)}</div></div>
-        <button class="alert-dismiss" onclick="this.closest('.alert').remove()">×</button>
-      </div>`;
-    mainContent.style.display = 'block';
+    alertsEl.innerHTML = alertBox(esc(title), esc(text));
+    mainContent.hidden = false;
   }
 
   function buildSaveBar(battles) {
     const LABELS = { win: 'Победа', loss: 'Поражение', draw: 'Ничья' };
     saveChecks.innerHTML = battles.map((b, i) => `
       <label class="save-check">
-        <input type="checkbox" data-i="${i}" checked onchange="updateSaveBtn()">
+        <input type="checkbox" data-i="${i}" checked>
         <span>${esc(b.map_name)} — ${esc(LABELS[b.result] ?? b.result)} (${esc(b.date_time.slice(0, 10))})</span>
       </label>`).join('');
     saveStatus.textContent = '';
     btnSave.disabled = false;
-    saveBar.style.display = 'flex';
+    saveBar.hidden = false;
   }
 
   function updateSaveBtn() {
@@ -598,23 +367,20 @@
 
   function renderAll({ battles = [], errors = [] }) {
     if (errors.length) {
-      alertsEl.innerHTML = `
-        <div class="alert">
-          <div class="alert-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>
-            </svg>
-          </div>
-          <div class="alert-body">
-            <div class="alert-title">${errors.length} реплей не удалось разобрать</div>
-            <div class="alert-text">${errors.map(e => `<code>${esc(e.file)}</code> — ${esc(e.error)}`).join(' &middot; ')}</div>
-          </div>
-          <button class="alert-dismiss" onclick="this.closest('.alert').remove()">×</button>
-        </div>`;
+      alertsEl.innerHTML = alertBox(
+        `${errors.length} ${plural(errors.length, 'реплей', 'реплея', 'реплеев')} не удалось разобрать`,
+        errors.map(e => `<code>${esc(e.file)}</code> — ${esc(e.error)}`).join(' &middot; '),
+      );
     }
 
-    if (!battles.length) { mainContent.style.display = 'block'; saveBar.style.display = 'none'; return; }
+    if (!battles.length) {
+      mainContent.hidden = false;
+      saveBar.hidden = true;
+      summaryEl.innerHTML = '';
+      avgEl.innerHTML = '';
+      metricEl.innerHTML = '';
+      return;
+    }
 
     _parsedBattles = battles;
     buildSaveBar(battles);
@@ -623,18 +389,15 @@
     const losses = battles.filter(b => b.result === 'loss').length;
     const draws  = battles.filter(b => b.result === 'draw').length;
     const total  = battles.length;
-    const winPct  = Math.round(wins  / total * 100);
+    const winPct  = Math.round(wins   / total * 100);
     const lossPct = Math.round(losses / total * 100);
     const drawPct = Math.round(draws  / total * 100);
-
-    sessionPill.textContent = `${total} реплей${total === 1 ? '' : total < 5 ? 'а' : 'ев'} загружено`;
-    sessionPill.classList.remove('idle');
 
     summaryEl.innerHTML = `
       <div class="stat-card">
         <div class="label"><span class="dot neutral"></span> Боёв</div>
         <div class="value">${total}</div>
-        <div class="delta">загружено реплеев</div>
+        <div class="delta">${plural(total, 'реплей', 'реплея', 'реплеев')} загружено</div>
       </div>
       <div class="stat-card">
         <div class="label"><span class="dot win"></span> Победы</div>
@@ -655,11 +418,11 @@
         <div class="bar bar-draw"><span style="width:${drawPct}%"></span></div>
       </div>`;
 
-    const sortedBattles = [...battles].reverse();
-    const n = sortedBattles.length;
+    _battles = [...battles].reverse();
+    const n = _battles.length;
     const playerMap = new Map();
 
-    sortedBattles.forEach((b, bi) => {
+    _battles.forEach((b, bi) => {
       b.players.filter(p => p.team === b.player_team).forEach(p => {
         if (!playerMap.has(p.name)) {
           playerMap.set(p.name, {
@@ -685,47 +448,44 @@
       });
     });
 
-    const rows = [];
+    _rows = [];
     playerMap.forEach((stats, name) => {
       const played = stats.damage.filter(v => v !== null).length;
       const avgShots     = avgFloat(stats.shots);
       const avgHits      = avgFloat(stats.hits);
       const avgPiercings = avgFloat(stats.piercings);
-      rows.push({ name, stats, played,
-        avgDamage:    avgInt(stats.damage),
-        avgAssists:   avgInt(stats.assists),
-        avgBlocked:   avgInt(stats.blocked),
-        avgReceived:  avgInt(stats.received),
-        avgFrags:     avgFloat(stats.frags),
+      _rows.push({ name, stats, played,
+        avgDamage:   avgInt(stats.damage),
+        avgAssists:  avgInt(stats.assists),
+        avgBlocked:  avgInt(stats.blocked),
+        avgReceived: avgInt(stats.received),
+        avgFrags:    avgFloat(stats.frags),
         avgShots,
         avgHits,
         avgPiercings,
-        accuracy:     avgShots > 0 ? Math.round(avgHits      / avgShots * 100) : 0,
-        penetration:  avgHits  > 0 ? Math.round(avgPiercings / avgHits  * 100) : 0,
+        accuracy:    avgShots > 0 ? Math.round(avgHits      / avgShots * 100) : 0,
+        penetration: avgHits  > 0 ? Math.round(avgPiercings / avgHits  * 100) : 0,
       });
     });
 
-    matricesEl.innerHTML =
-      buildAvgTable(rows, sortedBattles) +
-      buildMetricTable('damage',   rows, sortedBattles) +
-      buildMetricTable('assists',  rows, sortedBattles) +
-      buildMetricTable('combo',    rows, sortedBattles) +
-      buildMetricTable('frags',    rows, sortedBattles) +
-      buildMetricTable('accuracy', rows, sortedBattles);
-
-    mainContent.style.display = 'block';
+    avgEl.innerHTML = buildAvgTable(_rows, _battles);
+    renderMetricCard();
+    mainContent.hidden = false;
   }
 
   function playerCell(name, played, total) {
-    return `<td class="sticky-l"><div class="player"><div class="player-meta">
+    return `<td class="sticky-l"><div class="player-meta">
       <span class="player-name">${esc(name)}</span>
-      <span class="player-battles">${played} из ${total} боёв</span>
-    </div></div></td>`;
+      <span class="player-sub">${played} из ${total} ${plural(total, 'боя', 'боёв', 'боёв')}</span>
+    </div></td>`;
   }
 
-  function tableCard(title, meta, headHTML, bodyHTML) {
-    return `<div class="table-card" style="margin-bottom:16px">
-      <div class="table-meta"><div><strong>${esc(title)}</strong> &nbsp;·&nbsp; ${esc(meta)}</div></div>
+  function tableCard(title, meta, headHTML, bodyHTML, asideHTML = '') {
+    return `<div class="table-card">
+      <div class="table-meta">
+        <div><strong>${esc(title)}</strong> &nbsp;·&nbsp; ${esc(meta)}</div>
+        ${asideHTML}
+      </div>
       <div class="table-scroll"><table class="stats">
         <thead>${headHTML}</thead>
         <tbody>${bodyHTML}</tbody>
@@ -735,24 +495,19 @@
 
   function buildAvgTable(rows, battles) {
     const sorted = [...rows].sort((a, b) => b.avgDamage - a.avgDamage);
-    const maxDmg = Math.max(...rows.map(r => r.avgDamage), 1);
-    const maxAst = Math.max(...rows.map(r => r.avgAssists), 1);
-    const maxBlk = Math.max(...rows.map(r => r.avgBlocked), 1);
-    const maxRcv = Math.max(...rows.map(r => r.avgReceived), 1);
-    const maxFrg = Math.max(...rows.map(r => r.avgFrags), 1);
-
-    const maxAcc = Math.max(...rows.map(r => r.accuracy), 1);
-    const maxPen = Math.max(...rows.map(r => r.penetration), 1);
+    const max = key => Math.max(...rows.map(r => r[key]), 1);
+    const [maxDmg, maxAst, maxBlk, maxRcv, maxFrg, maxAcc, maxPen] =
+      ['avgDamage', 'avgAssists', 'avgBlocked', 'avgReceived', 'avgFrags', 'accuracy', 'penetration'].map(max);
 
     const head = `<tr>
       <th class="sticky-l">Игрок</th>
-      <th><div class="b-head"><span class="b-map">Ср. урон</span></div></th>
-      <th><div class="b-head"><span class="b-map">Ср. ассист</span></div></th>
-      <th><div class="b-head"><span class="b-map">Ср. заблок</span></div></th>
-      <th><div class="b-head"><span class="b-map">Ср. получен</span></div></th>
-      <th><div class="b-head"><span class="b-map">Ср. фраги</span></div></th>
-      <th><div class="b-head"><span class="b-map">Точность</span></div></th>
-      <th><div class="b-head"><span class="b-map">% пробитий</span></div></th>
+      <th><span class="col-head">Ср. урон</span></th>
+      <th><span class="col-head">Ср. ассист</span></th>
+      <th><span class="col-head">Ср. заблок</span></th>
+      <th><span class="col-head">Ср. получен</span></th>
+      <th><span class="col-head">Ср. фраги</span></th>
+      <th><span class="col-head">Точность</span></th>
+      <th><span class="col-head">% пробитий</span></th>
     </tr>`;
 
     const body = sorted.map(r => `<tr>
@@ -766,25 +521,31 @@
       <td class="${heatClass(r.penetration, maxPen)}">${r.penetration}%</td>
     </tr>`).join('');
 
-    return tableCard('Средние показатели', `${sorted.length} игроков · ${battles.length} боёв`, head, body);
+    const meta = `${sorted.length} ${plural(sorted.length, 'игрок', 'игрока', 'игроков')} · ${battles.length} ${plural(battles.length, 'бой', 'боя', 'боёв')}`;
+    return tableCard('Средние показатели', meta, head, body);
+  }
+
+  function metricTabs() {
+    return `<div class="segmented" role="tablist" aria-label="Метрика">
+      ${Object.entries(METRICS).map(([key, cfg]) =>
+        `<button type="button" role="tab" data-metric="${key}" aria-selected="${key === _metric}">${cfg.title}</button>`
+      ).join('')}
+    </div>`;
+  }
+
+  function renderMetricCard() {
+    metricEl.innerHTML = _rows.length ? buildMetricTable(_metric, _rows, _battles) : '';
   }
 
   function buildMetricTable(metric, rows, battles) {
-    const cfg = {
-      damage:   { sortKey: 'avgDamage',   title: 'Урон',                  col: 'Ср. урон ↓' },
-      assists:  { sortKey: 'avgAssists',  title: 'Ассист',                col: 'Ср. ассист ↓' },
-      combo:    { sortKey: 'avgBlocked',  title: 'Заблок / Получен',      col: 'Заблок ↓ / Получен' },
-      frags:    { sortKey: 'avgFrags',    title: 'Фраги',                 col: 'Ср. фраги ↓' },
-      accuracy: { sortKey: 'accuracy',    title: 'Точность / Пробития',   col: 'Точность ↓' },
-    }[metric];
-
+    const cfg = METRICS[metric];
     const sorted = [...rows].sort((a, b) => b[cfg.sortKey] - a[cfg.sortKey]);
 
     const headCols = battles.map((b, bi) => `<th><div class="b-head">
-      <span class="b-badge ${b.result || 'draw'}">${resultLabel[b.result] ?? '?'}</span>
-      <span class="b-map" title="${esc(b.map_name)}">${esc(b.map_name.length > 10 ? b.map_name.slice(0,9)+'…' : b.map_name)}</span>
-      ${b.player_vehicle ? `<span class="b-vehicle" title="${esc(b.player_vehicle)}">${esc(b.player_vehicle.length > 12 ? b.player_vehicle.slice(0,11)+'…' : b.player_vehicle)}</span>` : ''}
-      <span class="b-idx">#${String(bi+1).padStart(2,'0')}</span>
+      <span class="badge ${b.result || 'draw'}">${resultLabel[b.result] ?? '?'}</span>
+      <span class="b-map" title="${esc(b.map_name)}">${esc(b.map_name.length > 10 ? b.map_name.slice(0, 9) + '…' : b.map_name)}</span>
+      ${b.player_vehicle ? `<span class="b-vehicle" title="${esc(b.player_vehicle)}">${esc(b.player_vehicle.length > 12 ? b.player_vehicle.slice(0, 11) + '…' : b.player_vehicle)}</span>` : ''}
+      <span class="b-idx">#${String(bi + 1).padStart(2, '0')}</span>
     </div></th>`).join('');
 
     const head = `<tr>
@@ -793,34 +554,29 @@
       <th class="sticky-r">${cfg.col}</th>
     </tr>`;
 
-    let colMax;
-    if (metric === 'damage')   colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.damage[bi]  ?? 0), 1));
-    if (metric === 'assists')  colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.assists[bi] ?? 0), 1));
-    if (metric === 'combo')    colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.blocked[bi] ?? 0), 1));
-    if (metric === 'accuracy') colMax = battles.map((_, bi) => Math.max(...rows.map(r => r.stats.shots[bi]   ?? 0), 1));
+    const colMaxOf = key => battles.map((_, bi) => Math.max(...rows.map(r => r.stats[key][bi] ?? 0), 1));
+    const colMax = {
+      damage: 'damage', assists: 'assists', combo: 'blocked', accuracy: 'shots',
+    }[metric];
+    const maxes = colMax ? colMaxOf(colMax) : [];
 
     const body = sorted.map(r => {
       let cells = '', avgCell = '';
 
-      if (metric === 'damage') {
-        cells = r.stats.damage.map((d, bi) =>
-          d === null ? `<td class="heat-none">—</td>` :
-          `<td class="dmg ${heatClass(d, colMax[bi])}">${d.toLocaleString('ru')}</td>`
-        ).join('');
-        avgCell = `<span class="avg-val">${r.avgDamage.toLocaleString('ru')}</span><span class="avg-sub">${r.played} боёв</span>`;
-
-      } else if (metric === 'assists') {
-        cells = r.stats.assists.map((v, bi) =>
+      if (metric === 'damage' || metric === 'assists') {
+        const key = metric === 'damage' ? 'damage' : 'assists';
+        cells = r.stats[key].map((v, bi) =>
           v === null ? `<td class="heat-none">—</td>` :
-          `<td class="dmg ${heatClass(v, colMax[bi])}">${v.toLocaleString('ru')}</td>`
+          `<td class="dmg ${heatClass(v, maxes[bi])}">${v.toLocaleString('ru')}</td>`
         ).join('');
-        avgCell = `<span class="avg-val">${r.avgAssists.toLocaleString('ru')}</span><span class="avg-sub">${r.played} боёв</span>`;
+        const avg = metric === 'damage' ? r.avgDamage : r.avgAssists;
+        avgCell = `<span class="avg-val">${avg.toLocaleString('ru')}</span><span class="avg-sub">${r.played} ${plural(r.played, 'бой', 'боя', 'боёв')}</span>`;
 
       } else if (metric === 'combo') {
         cells = r.stats.blocked.map((bl, bi) => {
           if (bl == null) return `<td class="heat-none">—</td>`;
           const rc = r.stats.received[bi];
-          return `<td class="cell-combo ${heatClass(bl, colMax[bi])}">
+          return `<td class="cell-combo ${heatClass(bl, maxes[bi])}">
             <span class="combo-top">${bl.toLocaleString('ru')}</span>
             <span class="combo-bot">${(rc ?? 0).toLocaleString('ru')}</span>
           </td>`;
@@ -833,7 +589,7 @@
           const cls = f === 0 ? 'frag-0' : f === 1 ? 'frag-1' : f === 2 ? 'frag-2' : f === 3 ? 'frag-3' : 'frag-4';
           return `<td class="${cls}">${f}</td>`;
         }).join('');
-        avgCell = `<span class="avg-val">${fmtFrags(r.avgFrags)}</span><span class="avg-sub">${r.played} боёв</span>`;
+        avgCell = `<span class="avg-val">${fmtFrags(r.avgFrags)}</span><span class="avg-sub">${r.played} ${plural(r.played, 'бой', 'боя', 'боёв')}</span>`;
 
       } else {
         cells = r.stats.shots.map((sh, bi) => {
@@ -841,7 +597,7 @@
           const hi = r.stats.hits[bi] ?? 0;
           const pi = r.stats.piercings[bi] ?? 0;
           const acc = sh > 0 ? Math.round(hi / sh * 100) : 0;
-          return `<td class="cell-combo ${heatClass(sh, colMax[bi])}">
+          return `<td class="cell-combo ${heatClass(sh, maxes[bi])}">
             <span class="combo-top">${sh} · ${acc}%</span>
             <span class="combo-bot">${hi}п / ${pi}проб</span>
           </td>`;
@@ -856,7 +612,8 @@
       </tr>`;
     }).join('');
 
-    return tableCard(cfg.title, `${sorted.length} игроков × ${battles.length} боёв`, head, body);
+    const meta = `${sorted.length} ${plural(sorted.length, 'игрок', 'игрока', 'игроков')} × ${battles.length} ${plural(battles.length, 'бой', 'боя', 'боёв')}`;
+    return tableCard(cfg.title, meta, head, body, metricTabs());
   }
 </script>
 </body>

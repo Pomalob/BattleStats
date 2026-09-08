@@ -75,7 +75,7 @@ def test_upload_parses_a_replay(client, auth):
 def test_upload_rejects_other_file_types(client, auth):
     res = _upload(client, auth(), name="screenshot.png", data=b"\x89PNG")
     assert res.json()["battles"] == []
-    assert "Not a .mtreplay file" in res.json()["errors"][0]["error"]
+    assert "не файл .mtreplay" in res.json()["errors"][0]["error"].lower()
 
 
 def test_upload_reports_a_broken_replay_without_failing_the_batch(client, auth):
@@ -93,7 +93,7 @@ def test_upload_refuses_oversized_files(client, auth, monkeypatch):
     monkeypatch.setattr(config, "MAX_FILE_SIZE", 1024)
     body = _upload(client, auth(), data=b"\x12\x32\x34\x11" + b"\x00" * 5000).json()
     assert body["battles"] == []
-    assert "larger than" in body["errors"][0]["error"]
+    assert "больше" in body["errors"][0]["error"]
 
 
 def test_upload_refuses_too_many_files(client, auth, monkeypatch):

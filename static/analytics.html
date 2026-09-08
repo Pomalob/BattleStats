@@ -7,160 +7,70 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/app.css" />
 <style>
-  :root {
-    --bg: #0d1117; --bg-elev: #010409; --surface: #161b22; --surface-2: #1c232c;
-    --surface-3: #21262d; --border: #30363d; --border-muted: #21262d;
-    --text: #e6edf3; --text-muted: #7d8590; --text-dim: #484f58;
-    --win: #3fb950; --win-bg: rgba(63,185,80,0.12); --win-border: rgba(63,185,80,0.35);
-    --loss: #f85149; --loss-bg: rgba(248,81,73,0.12); --loss-border: rgba(248,81,73,0.35);
-    --draw: #8b949e; --gold: #e3b341; --gold-surface: #1d2025; --gold-surface-head: #23262b;
-    --accent: #1f6feb; --accent-hover: #388bfd;
-    --heat-low: #6e7681; --heat-mid: #e6edf3; --heat-high: #58a6ff; --heat-top: #3fb950;
+  .hidden-bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: var(--surface); border: 1px solid var(--border-muted);
+    border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px;
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
-
-  .page { max-width: 1440px; margin: 0 auto; padding: 24px 28px 64px; }
-
-  /* nav */
-  .nav {
-    display: flex; align-items: center; gap: 4px;
-    padding: 6px 0 20px; border-bottom: 1px solid var(--border-muted); margin-bottom: 24px;
-  }
-  .nav-brand { font-size: 18px; font-weight: 700; margin-right: 20px; }
-  .nav-brand .accent { color: var(--accent); }
-  .nav-link {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500;
-    color: var(--text-muted); text-decoration: none; transition: color 0.1s, background 0.1s;
-  }
-  .nav-link:hover { color: var(--text); background: var(--surface-3); }
-  .nav-link.active { color: var(--text); background: var(--surface-2); border: 1px solid var(--border); }
-
-  /* summary cards */
-  .summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 24px; }
-  .stat-card { background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px; padding: 16px 18px; }
-  .stat-card .label { font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; display: flex; align-items: center; gap: 6px; }
-  .stat-card .value { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin-top: 4px; line-height: 1.1; }
-  .stat-card .delta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
-  .stat-card .delta strong { color: var(--text); font-weight: 500; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .dot.win  { background: var(--win);  box-shadow: 0 0 6px rgba(63,185,80,0.6); }
-  .dot.loss { background: var(--loss); box-shadow: 0 0 6px rgba(248,81,73,0.6); }
-  .dot.neutral { background: var(--accent); box-shadow: 0 0 6px rgba(31,111,235,0.6); }
-  .bar { height: 4px; background: var(--surface-3); border-radius: 2px; margin-top: 12px; overflow: hidden; }
-  .bar > span { display: block; height: 100%; }
-  .bar-win  > span { background: var(--win); }
-  .bar-loss > span { background: var(--loss); }
-
-  /* sections */
-  .section-title { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 12px; }
-
-  /* table card */
-  .table-card { background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }
-  .table-meta { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border-muted); font-size: 12.5px; color: var(--text-muted); }
-  .table-meta strong { color: var(--text); font-weight: 600; }
-  .table-scroll { overflow-x: auto; scrollbar-color: var(--surface-3) var(--surface); }
-  .table-scroll::-webkit-scrollbar { height: 10px; }
-  .table-scroll::-webkit-scrollbar-track { background: var(--surface); }
-  .table-scroll::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 5px; border: 2px solid var(--surface); }
-
-  table.stats { border-collapse: separate; border-spacing: 0; width: 100%; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  table.stats thead th { background: var(--surface-2); color: var(--text-muted); font-weight: 500; text-align: center; padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; font-size: 11px; }
-  table.stats tbody td { padding: 0 12px; height: 42px; text-align: center; border-bottom: 1px solid var(--border-muted); color: var(--text); white-space: nowrap; }
-  table.stats tbody tr:hover td { background: rgba(177,186,196,0.04); }
-  table.stats tbody tr:hover td.sticky-l { background: #1b212b; }
-  table.stats tbody tr:last-child td { border-bottom: 0; }
-
-  th.sticky-l, td.sticky-l { position: sticky; left: 0; z-index: 3; text-align: left; padding: 0 16px; min-width: 180px; border-right: 1px solid var(--border); background: var(--surface); font-family: 'Inter', sans-serif; }
-  th.sticky-l { background: var(--surface-2); z-index: 4; }
-
-  .player-name { color: var(--text); font-weight: 500; font-size: 13px; }
-  .player-sub  { color: var(--text-muted); font-size: 10.5px; margin-top: 1px; font-family: 'JetBrains Mono', monospace; }
-
-  .heat-none { color: var(--text-dim); }
-  .heat-low  { color: var(--heat-low); }
-  .heat-mid  { color: var(--heat-mid); }
-  .heat-high { color: var(--heat-high); font-weight: 600; }
-  .heat-top  { color: var(--heat-top); font-weight: 700; background: rgba(63,185,80,0.06); }
-
-  .win-badge  { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; background: var(--win-bg); color: var(--win); border: 1px solid var(--win-border); }
-  .loss-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; background: var(--loss-bg); color: var(--loss); border: 1px solid var(--loss-border); }
-  .winrate-bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; margin-top: 4px; gap: 1px; }
-  .winrate-bar .w { background: var(--win); }
-  .winrate-bar .l { background: var(--loss); }
-  .winrate-bar .d { background: var(--draw); }
-
-  /* vehicle table */
-  .vehicle-name { font-size: 11.5px; color: var(--text-muted); }
-
-  /* win/loss delta */
-  td.delta-pos { color: var(--win); font-weight: 600; }
-  td.delta-neg { color: var(--loss); font-weight: 600; }
-  td.delta-neu { color: var(--text-muted); }
-
-  /* loading/empty */
-  .empty-state { text-align: center; padding: 48px 24px; color: var(--text-muted); font-size: 13px; }
-  .empty-state strong { display: block; color: var(--text); font-size: 16px; margin-bottom: 8px; }
-  .spinner-wrap { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 48px; color: var(--text-muted); }
-  .spinner { width: 22px; height: 22px; border-radius: 50%; border: 2.5px solid var(--surface-3); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  .btn-remove { background: transparent; border: 1px solid transparent; color: var(--text-dim); border-radius: 4px; width: 24px; height: 24px; cursor: pointer; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; transition: color 0.1s, border-color 0.1s, background 0.1s; }
-  .btn-remove:hover { color: var(--loss); border-color: var(--loss-border); background: var(--loss-bg); }
-
-  /* hidden players */
-  .hidden-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border-muted); border-radius: 10px; padding: 12px 16px; margin-bottom: 24px; }
   .hidden-label { font-size: 12px; color: var(--text-muted); }
-  .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-3); border: 1px solid var(--border); color: var(--text); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-family: inherit; cursor: pointer; }
-  .chip:hover { border-color: var(--accent); color: var(--accent); }
-  .chip span { color: var(--text-dim); font-size: 11px; }
-  .chip:hover span { color: var(--accent); }
-  .tag-mine { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 10.5px; background: rgba(31,111,235,0.14); color: var(--accent-hover); border: 1px solid rgba(31,111,235,0.35); }
-
-  /* narrow screens */
-  @media (max-width: 900px) {
-    .page { padding: 16px 14px 48px; }
-    .nav { flex-wrap: wrap; gap: 8px; }
-    .nav > div[style] { margin-left: 0 !important; width: 100%; }
-    .summary { grid-template-columns: repeat(2, 1fr); }
-    th.sticky-l, td.sticky-l { min-width: 148px; padding: 0 10px; }
+  .vehicle-name { font-size: 11.5px; color: var(--text-muted); }
+  .cell-date { color: var(--text-muted); font-size: 12px; }
+  .cell-file {
+    color: var(--text-dim); font-size: 11px; max-width: 220px;
+    overflow: hidden; text-overflow: ellipsis;
   }
-  @media (max-width: 520px) {
-    .summary { grid-template-columns: 1fr; }
-    .stat-card .value { font-size: 26px; }
-  }
+  td.col-vehicle { text-align: left; padding-left: 12px; }
+  th.col-vehicle { text-align: left; padding-left: 12px; }
+  .wr-cell { min-width: 120px; padding: 8px 12px; }
 </style>
 </head>
 <body>
 <div class="page">
 
-  <nav class="nav">
-    <div class="nav-brand">Stats<span class="accent">Battle</span></div>
-    <a href="/" class="nav-link">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      Быстрый чек
+  <header class="site-header">
+    <a class="brand" href="/">
+      <span class="brand-mark">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="8" stroke="#fff" stroke-width="1.5" opacity="0.95"/>
+          <circle cx="12" cy="12" r="2" fill="#fff"/>
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-title">Stats<span class="accent">Battle</span></span>
+        <span class="brand-sub">Мир Танков · Replay Analyzer</span>
+      </span>
     </a>
-    <a href="/analytics" class="nav-link active">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      Аналитика
-    </a>
-    <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-      <div style="display:flex;background:var(--surface-3);border:1px solid var(--border);border-radius:6px;overflow:hidden;">
-        <button id="btn-all"  onclick="setScope(false)" style="padding:5px 12px;font-size:12px;font-family:inherit;border:none;cursor:pointer;background:var(--accent);color:#fff;">Все бои</button>
-        <button id="btn-mine" onclick="setScope(true)"  style="padding:5px 12px;font-size:12px;font-family:inherit;border:none;cursor:pointer;background:transparent;color:var(--text-muted);">Мои бои</button>
+
+    <nav class="nav-links">
+      <a href="/" class="nav-link">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Быстрый чек
+      </a>
+      <a href="/analytics" class="nav-link active">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Аналитика
+      </a>
+    </nav>
+
+    <div class="header-right">
+      <div class="segmented" id="scope" role="tablist" aria-label="Охват">
+        <button type="button" role="tab" data-scope="all"  aria-selected="true">Все бои</button>
+        <button type="button" role="tab" data-scope="mine" aria-selected="false">Мои бои</button>
       </div>
-      <span style="font-size:12px;color:var(--text-muted);" id="nav-user"></span>
-      <button onclick="logout()" style="background:transparent;border:1px solid var(--border);color:var(--text-muted);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:inherit;">Выйти</button>
+      <span class="user-pill idle" id="user-pill"><span id="user-name">—</span></span>
+      <button class="btn btn-ghost btn-sm" id="btn-logout">Выйти</button>
     </div>
-  </nav>
+  </header>
 
   <div id="content">
     <div class="spinner-wrap"><div class="spinner"></div> Загружаем данные…</div>
   </div>
 
 </div>
+
 <script>
   const _token = localStorage.getItem('sb_token');
   if (!_token) window.location.href = '/login';
@@ -181,8 +91,22 @@
     return res;
   }
 
-  const fmt = v => v == null ? '—' : Number(v).toLocaleString('ru');
+  const contentEl = document.getElementById('content');
+
+  const DETAILS = { vehicles: 'Танки', maps: 'Карты', battles: 'Бои' };
+  let _detail = localStorage.getItem('sb_detail');
+  if (!DETAILS[_detail]) _detail = 'vehicles';
+  let _data = null;
+
+  const fmt  = v => v == null ? '—' : Number(v).toLocaleString('ru');
   const fmtF = v => v == null ? '—' : Number(v).toLocaleString('ru', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+  function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
+  }
 
   function logout() {
     localStorage.removeItem('sb_token');
@@ -199,39 +123,89 @@
     return 'heat-top';
   }
 
-  function render({ totals, players, maps, vehicles, hidden = [] }, battles) {
-    const total = Number(totals.total_battles ?? 0);
-    const wins  = Number(totals.wins  ?? 0);
-    const losses= Number(totals.losses ?? 0);
-    const draws = Number(totals.draws  ?? 0);
-    const wr    = total ? Math.round(wins / total * 100) : 0;
-    const lr    = total ? Math.round(losses / total * 100) : 0;
+  if (_username) {
+    document.getElementById('user-name').textContent = _username;
+    document.getElementById('user-pill').classList.remove('idle');
+  }
+  document.getElementById('btn-logout').addEventListener('click', logout);
 
-    document.getElementById('content').innerHTML = `
+  document.getElementById('scope').addEventListener('click', e => {
+    const btn = e.target.closest('[data-scope]');
+    if (!btn) return;
+    const mine = btn.dataset.scope === 'mine';
+    if (mine === _mineOnly) return;
+    _mineOnly = mine;
+    document.querySelectorAll('#scope [data-scope]').forEach(b =>
+      b.setAttribute('aria-selected', String((b.dataset.scope === 'mine') === mine)));
+    load();
+  });
+
+  // One delegated listener: #content is replaced on every render, but it survives.
+  contentEl.addEventListener('click', e => {
+    const detail = e.target.closest('[data-detail]');
+    if (detail) {
+      if (detail.dataset.detail === _detail) return;
+      _detail = detail.dataset.detail;
+      localStorage.setItem('sb_detail', _detail);
+      return renderDetail();
+    }
+    const hide = e.target.closest('[data-hide]');
+    if (hide) return hidePlayer(hide.dataset.hide);
+    const show = e.target.closest('[data-show]');
+    if (show) return restorePlayer(show.dataset.show);
+    const del = e.target.closest('[data-delete-battle]');
+    if (del) return removeBattle(Number(del.dataset.deleteBattle));
+  });
+
+  function tableCard(title, meta, headHTML, bodyHTML, asideHTML = '') {
+    return `<div class="table-card">
+      <div class="table-meta">
+        <div><strong>${esc(title)}</strong>${meta ? ` &nbsp;·&nbsp; ${meta}` : ''}</div>
+        ${asideHTML}
+      </div>
+      <div class="table-scroll"><table class="stats">
+        <thead>${headHTML}</thead>
+        <tbody>${bodyHTML}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  function render() {
+    const { totals, players, hidden = [] } = _data;
+    const total  = Number(totals.total_battles ?? 0);
+    const wins   = Number(totals.wins   ?? 0);
+    const losses = Number(totals.losses ?? 0);
+    const draws  = Number(totals.draws  ?? 0);
+    const wr = total ? Math.round(wins   / total * 100) : 0;
+    const lr = total ? Math.round(losses / total * 100) : 0;
+
+    contentEl.innerHTML = `
       ${total === 0 ? renderEmpty() : ''}
       ${renderSummary(total, wins, losses, draws, wr, lr, totals, players.length)}
       ${renderHidden(hidden)}
       ${renderPlayers(players)}
-      ${renderVehicles(vehicles)}
-      ${renderMaps(maps)}
-      ${renderBattles(battles)}
+      <div id="detail-table"></div>
     `;
+    if (total) renderDetail();
   }
 
   function renderEmpty() {
     return `<div class="empty-state">
-      <strong>Нет данных</strong>
-      Загрузи реплеи через <a href="/" style="color:var(--accent)">Быстрый чек</a> — они автоматически сохранятся в базу.
+      <strong>Пока пусто</strong>
+      Загрузи реплеи через <a href="/">Быстрый чек</a> и отметь бои, которые нужно сохранить.
     </div>`;
   }
 
   function renderSummary(total, wins, losses, draws, wr, lr, totals, playerCount) {
     if (!total) return '';
-    return `<div class="summary">
+    const range = totals.first_battle
+      ? `${esc(String(totals.first_battle).slice(0, 10))} — ${esc(String(totals.last_battle).slice(0, 10))}`
+      : '';
+    return `<div class="summary cols-5">
       <div class="stat-card">
         <div class="label"><span class="dot neutral"></span> Боёв в базе</div>
         <div class="value">${total}</div>
-        <div class="delta">${totals.first_battle ? totals.first_battle.slice(0,10) + ' — ' + totals.last_battle.slice(0,10) : ''}</div>
+        <div class="delta">${range}</div>
       </div>
       <div class="stat-card">
         <div class="label"><span class="dot win"></span> Победы</div>
@@ -246,9 +220,9 @@
         <div class="bar bar-loss"><span style="width:${lr}%"></span></div>
       </div>
       <div class="stat-card">
-        <div class="label">Ничьи</div>
+        <div class="label"><span class="dot draw"></span> Ничьи</div>
         <div class="value" style="color:var(--draw)">${draws}</div>
-        <div class="delta">${total ? Math.round(draws/total*100) : 0}%</div>
+        <div class="delta">${total ? Math.round(draws / total * 100) : 0}%</div>
       </div>
       <div class="stat-card">
         <div class="label">Игроков</div>
@@ -258,12 +232,21 @@
     </div>`;
   }
 
+  function renderHidden(hidden) {
+    if (!hidden.length) return '';
+    return `<div class="hidden-bar">
+      <span class="hidden-label">Скрыто из аналитики:</span>
+      ${hidden.map(n =>
+        `<button class="chip" data-show="${esc(n)}" title="Вернуть в аналитику">${esc(n)} <span>вернуть</span></button>`
+      ).join('')}
+    </div>`;
+  }
+
   function renderPlayers(players) {
     if (!players.length) return '';
 
-    const maxDmg = Math.max(...players.map(p => Number(p.avg_damage)), 1);
-    const maxAst = Math.max(...players.map(p => Number(p.avg_assists)), 1);
-    const maxBlk = Math.max(...players.map(p => Number(p.avg_blocked)), 1);
+    const maxOf = key => Math.max(...players.map(p => Number(p[key]) || 0), 1);
+    const maxDmg = maxOf('avg_damage'), maxAst = maxOf('avg_assists'), maxBlk = maxOf('avg_blocked');
 
     const rows = players.map(p => {
       const battles = Number(p.battles);
@@ -277,7 +260,7 @@
       return `<tr>
         <td class="sticky-l">
           <div class="player-name">${esc(p.name)}</div>
-          <div class="player-sub">${battles} боёв · WR ${wr}%</div>
+          <div class="player-sub">${battles} ${plural(battles, 'бой', 'боя', 'боёв')} · WR ${wr}%</div>
           <div class="winrate-bar">
             <span class="w" style="flex:${wins}"></span>
             <span class="l" style="flex:${losses}"></span>
@@ -290,50 +273,53 @@
         <td>${fmt(p.avg_received)}</td>
         <td>${fmtF(p.avg_frags)}</td>
         <td class="${diffCls}">${diffStr}</td>
-        <td><button class="btn-remove" data-hide="${esc(p.name)}" title="Скрыть игрока из аналитики">✕</button></td>
+        <td><button class="btn-icon" data-hide="${esc(p.name)}" title="Скрыть игрока из аналитики" aria-label="Скрыть игрока">✕</button></td>
       </tr>`;
     }).join('');
 
-    return `<div class="table-card">
-      <div class="table-meta">
-        <strong>Игроки</strong> &nbsp;·&nbsp; ${players.length} уникальных · сортировка по ср. урону
-        <span style="font-size:11px">Δ урон = победы − поражения</span>
-      </div>
-      <div class="table-scroll"><table class="stats">
-        <thead><tr>
-          <th class="sticky-l">Игрок</th>
-          <th>Ср. урон</th>
-          <th>Ср. ассист</th>
-          <th>Ср. заблок</th>
-          <th>Ср. получен</th>
-          <th>Ср. фраги</th>
-          <th>Δ урон win/loss</th>
-          <th></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
+    const head = `<tr>
+      <th class="sticky-l">Игрок</th>
+      <th>Ср. урон</th>
+      <th>Ср. ассист</th>
+      <th>Ср. заблок</th>
+      <th>Ср. получен</th>
+      <th>Ср. фраги</th>
+      <th>Δ урон win/loss</th>
+      <th></th>
+    </tr>`;
+
+    const meta = `${players.length} ${plural(players.length, 'игрок', 'игрока', 'игроков')} · сортировка по ср. урону`;
+    return tableCard('Игроки', meta, head, rows);
+  }
+
+  function detailTabs() {
+    return `<div class="segmented" role="tablist" aria-label="Разрез">
+      ${Object.entries(DETAILS).map(([key, label]) =>
+        `<button type="button" role="tab" data-detail="${key}" aria-selected="${key === _detail}">${label}</button>`
+      ).join('')}
     </div>`;
   }
 
-  function renderVehicles(vehicles) {
-    if (!vehicles.length) return '';
+  function renderDetail() {
+    const host = document.getElementById('detail-table');
+    if (!host) return;
+    const build = { vehicles: renderVehicles, maps: renderMaps, battles: renderBattles }[_detail];
+    host.innerHTML = build(_data);
+  }
+
+  function renderVehicles({ vehicles }) {
+    if (!vehicles.length) return tableCard('Танки', '', '', emptyRow('Нет данных по танкам'), detailTabs());
 
     const grouped = {};
-    vehicles.forEach(v => {
-      if (!grouped[v.name]) grouped[v.name] = [];
-      grouped[v.name].push(v);
-    });
-
-    const maxDmg = Math.max(...vehicles.map(v => Number(v.avg_damage)), 1);
+    vehicles.forEach(v => (grouped[v.name] ??= []).push(v));
+    const maxDmg = Math.max(...vehicles.map(v => Number(v.avg_damage) || 0), 1);
 
     const rows = Object.entries(grouped).map(([name, tanks]) =>
       tanks.map((v, i) => {
         const wr = Number(v.battles) ? Math.round(Number(v.wins) / Number(v.battles) * 100) : 0;
         return `<tr>
-          ${i === 0 ? `<td class="sticky-l" rowspan="${tanks.length}">
-            <div class="player-name">${esc(name)}</div>
-          </td>` : ''}
-          <td style="text-align:left; padding-left:12px"><span class="vehicle-name">${esc(v.vehicle)}</span></td>
+          ${i === 0 ? `<td class="sticky-l" rowspan="${tanks.length}"><div class="player-name">${esc(name)}</div></td>` : ''}
+          <td class="col-vehicle"><span class="vehicle-name">${esc(v.vehicle)}</span></td>
           <td>${v.battles}</td>
           <td class="${heatClass(Number(v.avg_damage), maxDmg)}">${fmt(v.avg_damage)}</td>
           <td>${fmt(v.avg_assists)}</td>
@@ -343,27 +329,20 @@
       }).join('')
     ).join('');
 
-    return `<div class="table-card">
-      <div class="table-meta"><strong>Игрок × Танк</strong></div>
-      <div class="table-scroll"><table class="stats">
-        <thead><tr>
-          <th class="sticky-l">Игрок</th>
-          <th style="text-align:left; padding-left:12px">Танк</th>
-          <th>Боёв</th>
-          <th>Ср. урон</th>
-          <th>Ср. ассист</th>
-          <th>Ср. фраги</th>
-          <th>WR%</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-    </div>`;
+    const head = `<tr>
+      <th class="sticky-l">Игрок</th>
+      <th class="col-vehicle">Танк</th>
+      <th>Боёв</th>
+      <th>Ср. урон</th>
+      <th>Ср. ассист</th>
+      <th>Ср. фраги</th>
+      <th>WR%</th>
+    </tr>`;
+    return tableCard('Игрок × Танк', `${vehicles.length} ${plural(vehicles.length, 'связка', 'связки', 'связок')}`, head, rows, detailTabs());
   }
 
-  function renderMaps(maps) {
-    if (!maps.length) return '';
-
-    const maxBattles = Math.max(...maps.map(m => Number(m.battles)), 1);
+  function renderMaps({ maps }) {
+    if (!maps.length) return tableCard('Карты', '', '', emptyRow('Нет данных по картам'), detailTabs());
 
     const rows = maps.map(m => {
       const battles = Number(m.battles);
@@ -376,11 +355,11 @@
       return `<tr>
         <td class="sticky-l"><div class="player-name">${esc(m.map_name)}</div></td>
         <td>${battles}</td>
-        <td><span class="win-badge">${wins}W</span></td>
-        <td><span class="loss-badge">${losses}L</span></td>
+        <td><span class="badge win">${wins}W</span></td>
+        <td><span class="badge loss">${losses}L</span></td>
         <td>${draws}</td>
         <td class="${wrCls}">${wr}%</td>
-        <td style="min-width:120px; padding: 8px 12px;">
+        <td class="wr-cell">
           <div class="winrate-bar">
             <span class="w" style="flex:${wins}"></span>
             <span class="l" style="flex:${losses}"></span>
@@ -390,93 +369,53 @@
       </tr>`;
     }).join('');
 
-    return `<div class="table-card">
-      <div class="table-meta"><strong>Карты</strong> &nbsp;·&nbsp; ${maps.length} карт · сортировка по количеству боёв</div>
-      <div class="table-scroll"><table class="stats">
-        <thead><tr>
-          <th class="sticky-l">Карта</th>
-          <th>Боёв</th>
-          <th>Победы</th>
-          <th>Поражения</th>
-          <th>Ничьи</th>
-          <th>WR%</th>
-          <th style="min-width:120px">W / L / D</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-    </div>`;
+    const head = `<tr>
+      <th class="sticky-l">Карта</th>
+      <th>Боёв</th>
+      <th>Победы</th>
+      <th>Поражения</th>
+      <th>Ничьи</th>
+      <th>WR%</th>
+      <th style="min-width:120px">W / L / D</th>
+    </tr>`;
+    return tableCard('Карты', `${maps.length} ${plural(maps.length, 'карта', 'карты', 'карт')} · сортировка по количеству боёв`, head, rows, detailTabs());
   }
 
-  function setScope(mine) {
-    _mineOnly = mine;
-    document.getElementById('btn-all').style.background  = mine ? 'transparent' : 'var(--accent)';
-    document.getElementById('btn-all').style.color       = mine ? 'var(--text-muted)' : '#fff';
-    document.getElementById('btn-mine').style.background = mine ? 'var(--accent)' : 'transparent';
-    document.getElementById('btn-mine').style.color      = mine ? '#fff' : 'var(--text-muted)';
-    load();
-  }
+  function renderBattles({ battles }) {
+    if (!battles.length) return tableCard('Бои', '', '', emptyRow('Нет сохранённых боёв'), detailTabs());
 
-  document.getElementById('nav-user').textContent = _username;
-
-  async function load() {
-    document.getElementById('content').innerHTML = `<div class="spinner-wrap"><div class="spinner"></div> Загружаем данные…</div>`;
-    const [summaryRes, battlesRes] = await Promise.all([
-      api(`/api/analytics/summary?mine=${_mineOnly}`),
-      api(`/api/battles?mine=${_mineOnly}`),
-    ]);
-    const data = await summaryRes.json();
-    if (data.error) {
-      const msg = data.error === 'database_unavailable' ? 'База данных недоступна.' : data.error;
-      document.getElementById('content').innerHTML = `<div class="empty-state"><strong>Ошибка</strong>${esc(msg)}</div>`;
-      return;
-    }
-    const battlesData = battlesRes.ok ? await battlesRes.json() : { battles: [] };
-    render(data, battlesData.battles ?? []);
-  }
-
-  function renderBattles(battles) {
-    if (!battles || !battles.length) return '';
-    const resultLabel = { win: 'Победа', loss: 'Поражение', draw: 'Ничья' };
-    const resultCls   = { win: 'win-badge', loss: 'loss-badge', draw: '' };
+    const label = { win: 'Победа', loss: 'Поражение', draw: 'Ничья' };
 
     const rows = battles.map(b => {
-      const date = (b.date_time || '').slice(0, 16).replace('T', ' ');
-      const resCls = resultCls[b.result] ?? '';
-      const resLabel = esc(resultLabel[b.result] ?? b.result);
+      const date = String(b.date_time || '').slice(0, 16).replace('T', ' ');
+      const result = b.result === 'draw'
+        ? esc(label.draw)
+        : `<span class="badge ${b.result}">${esc(label[b.result] ?? b.result)}</span>`;
       return `<tr id="battle-row-${b.id}">
-        <td style="color:var(--text-muted);font-size:12px">${esc(date)}</td>
-        <td class="sticky-l" style="min-width:160px"><div class="player-name">${esc(b.map_name)}</div></td>
-        <td>${resCls ? `<span class="${resCls}">${resLabel}</span>` : resLabel}</td>
-        <td style="color:var(--text-muted)">${b.player_count} игроков</td>
+        <td class="cell-date">${esc(date)}</td>
+        <td class="sticky-l"><div class="player-name">${esc(b.map_name)}</div></td>
+        <td>${result}</td>
+        <td style="color:var(--text-muted)">${b.player_count}</td>
         <td>${b.mine ? '<span class="tag-mine">мой</span>' : ''}</td>
-        <td style="color:var(--text-dim);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(b.filename)}</td>
-        <td>${b.mine ? `<button class="btn-remove" data-delete-battle="${b.id}" title="Удалить бой из своей истории">✕</button>` : ''}</td>
+        <td class="cell-file" title="${esc(b.filename)}">${esc(b.filename)}</td>
+        <td>${b.mine ? `<button class="btn-icon" data-delete-battle="${b.id}" title="Удалить бой из своей истории" aria-label="Удалить бой">✕</button>` : ''}</td>
       </tr>`;
     }).join('');
 
-    return `<div class="table-card">
-      <div class="table-meta"><strong>Все бои</strong> &nbsp;·&nbsp; ${battles.length} боёв в базе</div>
-      <div class="table-scroll"><table class="stats">
-        <thead><tr>
-          <th>Дата</th>
-          <th class="sticky-l">Карта</th>
-          <th>Результат</th>
-          <th>Игроков</th>
-          <th>Мои</th>
-          <th>Файл</th>
-          <th></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-    </div>`;
+    const head = `<tr>
+      <th>Дата</th>
+      <th class="sticky-l">Карта</th>
+      <th>Результат</th>
+      <th>Игроков</th>
+      <th>Мои</th>
+      <th>Файл</th>
+      <th></th>
+    </tr>`;
+    return tableCard('Бои', `${battles.length} ${plural(battles.length, 'бой', 'боя', 'боёв')} в базе`, head, rows, detailTabs());
   }
 
-  function renderHidden(hidden) {
-    if (!hidden.length) return '';
-    return `<div class="hidden-bar">
-      <span class="hidden-label">Скрыто из аналитики:</span>
-      ${hidden.map(n => `<button class="chip" data-show="${esc(n)}" title="Вернуть в аналитику">${esc(n)} <span>вернуть</span></button>`).join('')}
-    </div>`;
+  function emptyRow(text) {
+    return `<tr><td style="text-align:center;padding:32px;color:var(--text-muted)">${esc(text)}</td></tr>`;
   }
 
   async function fail(res) {
@@ -505,18 +444,25 @@
     res.ok ? load() : fail(res);
   }
 
-  // One delegated listener: the container survives every re-render.
-  document.getElementById('content').addEventListener('click', e => {
-    const hide = e.target.closest('[data-hide]');
-    if (hide) return hidePlayer(hide.dataset.hide);
-    const show = e.target.closest('[data-show]');
-    if (show) return restorePlayer(show.dataset.show);
-    const del = e.target.closest('[data-delete-battle]');
-    if (del) return removeBattle(Number(del.dataset.deleteBattle));
-  });
+  async function load() {
+    contentEl.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div> Загружаем данные…</div>`;
+    const [summaryRes, battlesRes] = await Promise.all([
+      api(`/api/analytics/summary?mine=${_mineOnly}`),
+      api(`/api/battles?mine=${_mineOnly}`),
+    ]);
+    const data = await summaryRes.json();
+    if (data.error) {
+      const msg = data.error === 'database_unavailable' ? 'База данных недоступна.' : data.error;
+      contentEl.innerHTML = `<div class="empty-state"><strong>Ошибка</strong>${esc(msg)}</div>`;
+      return;
+    }
+    const battlesData = battlesRes.ok ? await battlesRes.json() : { battles: [] };
+    _data = { ...data, battles: battlesData.battles ?? [] };
+    render();
+  }
 
   load().catch(err => {
-    document.getElementById('content').innerHTML = `<div class="empty-state"><strong>Ошибка загрузки</strong>${esc(err.message)}</div>`;
+    contentEl.innerHTML = `<div class="empty-state"><strong>Ошибка загрузки</strong>${esc(err.message)}</div>`;
   });
 </script>
 </body>

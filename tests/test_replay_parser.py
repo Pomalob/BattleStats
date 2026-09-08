@@ -74,19 +74,19 @@ def test_replay_without_results_returns_the_roster_only():
 
 
 def test_rejects_a_file_that_is_not_a_replay():
-    with pytest.raises(ValueError, match="magic bytes"):
+    with pytest.raises(ValueError, match="сигнатура"):
         parse_replay_bytes(b"PK\x03\x04 this is a zip", "notes.mtreplay")
 
 
 def test_rejects_a_truncated_file():
-    with pytest.raises(ValueError, match="too small|out of range"):
+    with pytest.raises(ValueError, match="слишком маленький|вне диапазона"):
         parse_replay_bytes(MAGIC + b"\x02\x00\x00", "short.mtreplay")
 
 
 def test_rejects_a_block_size_that_runs_past_the_end_of_the_file():
     import struct
     data = MAGIC + struct.pack("<I", 2) + struct.pack("<I", 10_000) + b"{}"
-    with pytest.raises(ValueError, match="out of range"):
+    with pytest.raises(ValueError, match="вне диапазона"):
         parse_replay_bytes(data, "lying.mtreplay")
 
 
@@ -94,7 +94,7 @@ def test_rejects_a_block_that_is_not_json():
     import struct
     payload = b"not json at all"
     data = MAGIC + struct.pack("<I", 1) + struct.pack("<I", len(payload)) + payload
-    with pytest.raises(ValueError, match="not valid JSON"):
+    with pytest.raises(ValueError, match="некорректный JSON"):
         parse_replay_bytes(data, "garbage.mtreplay")
 
 
