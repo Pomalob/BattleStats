@@ -105,22 +105,34 @@ class FakeDB:
             "last_battle": max((b["date_time"] for b in rows), default=None),
         }
 
-    def get_player_summary(self, user_id=None, viewer_id=None):
+    def _team_names(self, user_id=None):
+        counts = {}
+        for b in self.battles.values():
+            if user_id and (user_id, b["id"]) not in self.owners:
+                continue
+            for p in b.get("players", []):
+                if p["team"] == b["player_team"]:
+                    counts[p["name"]] = counts.get(p["name"], 0) + 1
+        return counts
+
+    def count_players(self, user_id=None, viewer_id=None):
         hidden = set(self.get_hidden_players(viewer_id)) if viewer_id else set()
-        names = {
-            p["name"]
-            for b in self.battles.values()
-            if not user_id or (user_id, b["id"]) in self.owners
-            for p in b.get("players", [])
-            if p["team"] == b["player_team"]
-        }
-        return [{"name": n, "battles": 1, "avg_damage": 0} for n in sorted(names - hidden)]
+        return len(set(self._team_names(user_id)) - hidden)
+
+    def get_player_summary(self, user_id=None, viewer_id=None, min_battles=1):
+        hidden = set(self.get_hidden_players(viewer_id)) if viewer_id else set()
+        counts = self._team_names(user_id)
+        return [
+            {"name": n, "battles": c, "avg_damage": 0}
+            for n, c in sorted(counts.items())
+            if n not in hidden and c >= min_battles
+        ]
 
     def get_map_summary(self, user_id=None):
         return []
 
-    def get_vehicle_summary(self, user_id=None, viewer_id=None):
-        return []
+    def get_vehicle_summary(self, user_id=None, viewer_id=None, names=None):
+        return [{"name": n, "vehicle": "T-34"} for n in (names or [])]
 
     def ping(self):
         return True
@@ -141,6 +153,7 @@ def fake_db(monkeypatch):
         "create_user", "get_user_by_username", "save_battle", "get_battles_list",
         "delete_battle", "get_hidden_players", "hide_player", "unhide_player",
         "get_db_totals", "get_player_summary", "get_map_summary", "get_vehicle_summary",
+        "count_players",
     ):
         monkeypatch.setattr(app_module, name, getattr(db, name))
     app_module._login_failures.clear()

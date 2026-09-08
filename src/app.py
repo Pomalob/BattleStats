@@ -17,7 +17,7 @@ import database
 from auth import create_token, decode_token, hash_password, verify_password
 from database import (
     create_user, delete_battle, get_battles_list, get_db_totals, get_hidden_players,
-    get_map_summary, get_player_summary, get_user_by_username, get_vehicle_summary,
+    count_players, get_map_summary, get_player_summary, get_user_by_username, get_vehicle_summary,
     hide_player, init_db, save_battle, unhide_player,
 )
 from replay_parser import parse_replay_bytes
@@ -322,7 +322,7 @@ def save_battles(body: dict, user: dict = Depends(require_user)):
     battles = body.get("battles", [])
     if not isinstance(battles, list):
         raise HTTPException(400, "Поле battles должно быть списком")
-    if len(battles) > config.MAX_FILES_PER_UPLOAD:
+    if len(battles) > config.MAX_BATTLES_PER_SAVE:
         raise HTTPException(413, "Слишком много боёв в одном запросе")
 
     counts = {"created": 0, "linked": 0, "already": 0}
@@ -383,18 +383,28 @@ def remove_hidden_player(name: str, user: dict = Depends(require_user)):
 # --- Analytics ---
 
 @app.get("/api/analytics/summary")
-def analytics_summary(mine: bool = False, user: dict = Depends(require_user)):
+def analytics_summary(
+    mine: bool = False,
+    min_battles: int = 1,
+    user: dict = Depends(require_user),
+):
     if not _DB_AVAILABLE:
         return JSONResponse({"error": "database_unavailable"}, status_code=503)
     viewer_id = user["id"]
     scope_id = viewer_id if mine else None
+    min_battles = min(max(min_battles, 1), 100)
     try:
+        players = get_player_summary(scope_id, viewer_id=viewer_id, min_battles=min_battles)
         return {
-            "totals":   get_db_totals(scope_id),
-            "players":  get_player_summary(scope_id, viewer_id=viewer_id),
-            "maps":     get_map_summary(scope_id),
-            "vehicles": get_vehicle_summary(scope_id, viewer_id=viewer_id),
-            "hidden":   get_hidden_players(viewer_id),
+            "totals":        get_db_totals(scope_id),
+            "players":       players,
+            "players_total": count_players(scope_id, viewer_id=viewer_id),
+            "min_battles":   min_battles,
+            "maps":          get_map_summary(scope_id),
+            # Same people as the table above, so the two never disagree.
+            "vehicles":      get_vehicle_summary(scope_id, viewer_id=viewer_id,
+                                                 names=[p["name"] for p in players]),
+            "hidden":        get_hidden_players(viewer_id),
         }
     except Exception as e:
         traceback.print_exc()

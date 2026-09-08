@@ -20,6 +20,8 @@ def build_replay(
     with_results: bool = True,
     anonymise_meta: bool = False,
     drop_personal: bool = False,
+    map_display_name: str | None = None,
+    real_names: dict[str, str] | None = None,
 ) -> bytes:
     """Assemble a replay from a compact player spec.
 
@@ -53,6 +55,8 @@ def build_replay(
         "playerName": player_name,
         "vehicles": meta_vehicles,
     }
+    if map_display_name is not None:
+        meta["mapDisplayName"] = map_display_name
 
     data = MAGIC + struct.pack("<I", 2 if with_results else 1) + _block(meta)
     if not with_results:
@@ -73,6 +77,7 @@ def build_replay(
             "directHits": p.get("hits", 0),
             "piercings": p.get("piercings", 0),
             "deathReason": p.get("death_reason", -1),
+            "accountDBID": 1000 + i,
         }]
         for i, p in enumerate(players)
     }
@@ -87,6 +92,12 @@ def build_replay(
 
     common = {"winnerTeam": winner_team}
     results_block = {"common": common, "vehicles": res_vehicles}
+    if real_names:
+        results_block["players"] = {
+            str(1000 + i): {"name": p["name"], "realName": real_names.get(p["name"], p["name"]),
+                            "team": p.get("team", 1)}
+            for i, p in enumerate(players)
+        }
     if not drop_personal:
         own = next((p for p in players if p["name"] == player_name), None)
         if own is not None:

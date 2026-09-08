@@ -259,3 +259,29 @@ def test_aggregates_are_empty_rather_than_broken_without_data(db):
     assert db.get_map_summary() == []
     assert db.get_vehicle_summary() == []
     assert db.get_battles_list() == []
+
+
+def test_min_battles_filters_out_the_one_off_players(db, seeded):
+    """A few hundred uploaded battles leave hundreds of names seen exactly once."""
+    once = make_battle("h-once", "Утёс", "win", 1, [
+        {"name": "P1", "damage": 100}, {"name": "Random", "damage": 100},
+    ], date_time="2025-01-05 20:00:00")
+    db.save_battle(once, seeded["alice"])
+
+    assert db.count_players() == 3
+    assert {r["name"] for r in db.get_player_summary(min_battles=1)} == {"P1", "P2", "Random"}
+    assert {r["name"] for r in db.get_player_summary(min_battles=2)} == {"P1", "P2"}
+    assert {r["name"] for r in db.get_player_summary(min_battles=4)} == {"P1"}
+    assert db.get_player_summary(min_battles=99) == []
+
+
+def test_count_players_ignores_the_filter_but_honours_hiding(db, seeded):
+    assert db.count_players() == 2
+    db.hide_player(seeded["alice"], "P2")
+    assert db.count_players(viewer_id=seeded["alice"]) == 1
+    assert db.count_players(viewer_id=seeded["bob"]) == 2
+
+
+def test_vehicle_summary_can_be_restricted_to_a_set_of_players(db, seeded):
+    assert {r["name"] for r in db.get_vehicle_summary(names=["P1"])} == {"P1"}
+    assert db.get_vehicle_summary(names=[]) == []

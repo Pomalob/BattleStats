@@ -41,6 +41,8 @@ TOKEN_TTL_DAYS = _int_env("TOKEN_TTL_DAYS", 30)
 MAX_FILES_PER_UPLOAD = _int_env("MAX_FILES_PER_UPLOAD", 200)
 MAX_FILE_SIZE = _int_env("MAX_FILE_SIZE", 10 * 1024 * 1024)
 MAX_UPLOAD_SIZE = _int_env("MAX_UPLOAD_SIZE", 150 * 1024 * 1024)
+# Parsed battles are small, so this only bounds one save request.
+MAX_BATTLES_PER_SAVE = _int_env("MAX_BATTLES_PER_SAVE", 500)
 
 # Connection pool. Neon's free tier is happiest with a small pool.
 DB_POOL_MIN = _int_env("DB_POOL_MIN", 1)

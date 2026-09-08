@@ -158,7 +158,7 @@
 
   <div class="spinner-card" id="loading">
     <div class="spinner"></div>
-    <div class="spinner-text">Парсим реплеи…</div>
+    <div class="spinner-text" id="loading-text">Парсим реплеи…</div>
   </div>
 
   <div id="main-content" hidden>
@@ -205,6 +205,7 @@
   const saveStatus  = document.getElementById('save-status');
   const btnSave     = document.getElementById('btn-save');
   const alertsEl    = document.getElementById('alerts');
+  const loadingText = document.getElementById('loading-text');
   const avgEl       = document.getElementById('avg-table');
   const metricEl    = document.getElementById('metric-table');
 
@@ -285,24 +286,64 @@
     renderMetricCard();
   });
 
-  async function uploadFiles(files) {
+  // A replay is around a megabyte, so a full replay folder is far past what one
+  // request may carry. Send it in batches the server limits comfortably allow.
+  const BATCH_FILES = 20;
+  const BATCH_BYTES = 25 * 1024 * 1024;
+  const SAVE_BATCH = 100;
+
+  function intoBatches(files) {
+    const batches = [];
+    let current = [], bytes = 0;
+    for (const file of files) {
+      if (current.length && (current.length >= BATCH_FILES || bytes + file.size > BATCH_BYTES)) {
+        batches.push(current);
+        current = []; bytes = 0;
+      }
+      current.push(file);
+      bytes += file.size;
+    }
+    if (current.length) batches.push(current);
+    return batches;
+  }
+
+  async function uploadFiles(fileList) {
+    const files = [...fileList];
     if (!files.length) return;
-    const fd = new FormData();
-    for (const f of files) fd.append('files', f);
+
     loading.classList.add('visible');
+    loadingText.textContent = 'Парсим реплеи…';
     mainContent.hidden = true;
     saveBar.hidden = true;
     alertsEl.innerHTML = '';
     _parsedBattles = [];
+
+    const battles = [], errors = [];
+    let done = 0;
     try {
-      const res = await api('/api/upload', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) { showAlert(`Ошибка сервера ${res.status}`, data?.detail ?? JSON.stringify(data)); return; }
-      renderAll(data);
+      for (const batch of intoBatches(files)) {
+        if (files.length > BATCH_FILES) {
+          loadingText.textContent = `Парсим реплеи… ${done} из ${files.length}`;
+        }
+        const fd = new FormData();
+        for (const f of batch) fd.append('files', f);
+        const res = await api('/api/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          showAlert(`Ошибка сервера ${res.status}`, data?.detail ?? JSON.stringify(data));
+          return;
+        }
+        battles.push(...(data.battles ?? []));
+        errors.push(...(data.errors ?? []));
+        done += batch.length;
+      }
+      battles.sort((a, b) => String(b.date_time).localeCompare(String(a.date_time)));
+      renderAll({ battles, errors });
     } catch (e) {
       showAlert('Ошибка соединения', e.message);
     } finally {
       loading.classList.remove('visible');
+      loadingText.textContent = 'Парсим реплеи…';
     }
   }
 
@@ -353,13 +394,20 @@
     btnSave.disabled = true;
     saveStatus.textContent = 'Сохранение…';
     try {
-      const res = await api('/api/battles/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ battles: selected }),
-      });
-      const data = await res.json();
-      if (!res.ok) { saveStatus.textContent = `Ошибка: ${data?.detail ?? res.status}`; btnSave.disabled = false; return; }
+      const data = { created: 0, linked: 0, skipped: 0 };
+      for (let i = 0; i < selected.length; i += SAVE_BATCH) {
+        if (selected.length > SAVE_BATCH) {
+          saveStatus.textContent = `Сохранение… ${i} из ${selected.length}`;
+        }
+        const res = await api('/api/battles/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ battles: selected.slice(i, i + SAVE_BATCH) }),
+        });
+        const part = await res.json();
+        if (!res.ok) { saveStatus.textContent = `Ошибка: ${part?.detail ?? res.status}`; btnSave.disabled = false; return; }
+        data.created += part.created; data.linked += part.linked; data.skipped += part.skipped;
+      }
       const parts = [];
       if (data.created) parts.push(`новых боёв: ${data.created}`);
       if (data.linked)  parts.push(`добавлено к тебе: ${data.linked}`);

@@ -149,6 +149,16 @@ def init_db():
         # Fails if the table already holds names that differ only by case; that is a
         # data problem to resolve by hand, not a reason to block startup.
         _run_migration(conn, "CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key ON users (lower(username))")
+        # Old rows stored the replay's own "DD.MM.YYYY HH:MM:SS", which sorts wrong
+        # as text; rewrite them to the same ISO order the parser produces now.
+        _run_migration(conn, r"""
+            UPDATE battles
+            SET date_time = substring(date_time from 7 for 4) || '-'
+                         || substring(date_time from 4 for 2) || '-'
+                         || substring(date_time from 1 for 2)
+                         || substring(date_time from 11)
+            WHERE date_time ~ '^[0-9]{2}\.[0-9]{2}\.[0-9]{4}'
+        """)
         _migrate_map_names(conn)
 
 
@@ -366,7 +376,32 @@ def get_db_totals(user_id: int | None = None) -> dict:
             return dict(cur.fetchone())
 
 
-def get_player_summary(user_id: int | None = None, viewer_id: int | None = None) -> list[dict]:
+def count_players(user_id: int | None = None, viewer_id: int | None = None) -> int:
+    """How many distinct team-mates appear at all, before any min_battles filter."""
+    join, params = _scope_join(user_id)
+    hidden, hidden_params = _hidden_filter(viewer_id)
+    sql = f"""
+        SELECT COUNT(DISTINCT ps.name) AS n
+        FROM player_stats ps
+        JOIN battles b ON b.id = ps.battle_id
+        {join}
+        WHERE ps.team = b.player_team
+        {hidden}
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, [*params, *hidden_params])
+            return int(cur.fetchone()["n"])
+
+
+def get_player_summary(
+    user_id: int | None = None,
+    viewer_id: int | None = None,
+    min_battles: int = 1,
+) -> list[dict]:
+    """Team-mate averages. min_battles drops the one-off randoms that otherwise
+    bury the people you actually play with — with a few hundred battles uploaded,
+    most names in the table appear exactly once."""
     join, params = _scope_join(user_id)
     hidden, hidden_params = _hidden_filter(viewer_id)
     sql = f"""
@@ -392,11 +427,12 @@ def get_player_summary(user_id: int | None = None, viewer_id: int | None = None)
         WHERE ps.team = b.player_team
         {hidden}
         GROUP BY ps.name
+        HAVING COUNT(DISTINCT ps.battle_id) >= %s
         ORDER BY avg_damage DESC
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, [*params, *hidden_params])
+            cur.execute(sql, [*params, *hidden_params, max(1, min_battles)])
             return [dict(r) for r in cur.fetchall()]
 
 
@@ -420,9 +456,16 @@ def get_map_summary(user_id: int | None = None) -> list[dict]:
             return [dict(r) for r in cur.fetchall()]
 
 
-def get_vehicle_summary(user_id: int | None = None, viewer_id: int | None = None) -> list[dict]:
+def get_vehicle_summary(
+    user_id: int | None = None,
+    viewer_id: int | None = None,
+    names: list[str] | None = None,
+) -> list[dict]:
+    """Per-tank averages, restricted to `names` so this table shows the same
+    players as the summary above."""
     join, params = _scope_join(user_id)
     hidden, hidden_params = _hidden_filter(viewer_id)
+    name_filter, name_params = ("AND ps.name = ANY(%s)", [list(names)]) if names is not None else ("", [])
     sql = f"""
         SELECT
             ps.name,
@@ -438,10 +481,11 @@ def get_vehicle_summary(user_id: int | None = None, viewer_id: int | None = None
         {join}
         WHERE ps.team = b.player_team
         {hidden}
+        {name_filter}
         GROUP BY ps.name, ps.vehicle
         ORDER BY ps.name, battles DESC
     """
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, [*params, *hidden_params])
+            cur.execute(sql, [*params, *hidden_params, *name_params])
             return [dict(r) for r in cur.fetchall()]

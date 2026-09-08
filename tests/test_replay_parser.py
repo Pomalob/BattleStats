@@ -138,3 +138,46 @@ def test_a_replay_with_no_identifiable_player_is_rejected():
                         players=[{"name": "Alice", "team": 1, "damage": 100}])
     with pytest.raises(ValueError, match="команду игрока"):
         parse_replay_bytes(data, "b.mtreplay")
+
+
+def test_the_games_own_map_name_wins_over_the_table():
+    """Replays carry mapDisplayName; the built-in table is only for replays without one."""
+    data = build_replay(map_name="114_czech", map_display_name="Промзона")
+    assert parse_replay_bytes(data, "b.mtreplay").map_name == "Промзона"
+
+
+def test_a_map_missing_from_the_table_still_gets_its_real_name():
+    data = build_replay(map_name="777_brand_new", map_display_name="Новая карта")
+    assert parse_replay_bytes(data, "b.mtreplay").map_name == "Новая карта"
+
+
+def test_replay_dates_are_rewritten_so_they_sort_chronologically():
+    """Replays write DD.MM.YYYY, which as text puts 31 August after 8 September."""
+    august = parse_replay_bytes(build_replay(date_time="31.08.2026 07:17:59"), "a.mtreplay")
+    september = parse_replay_bytes(build_replay(date_time="08.09.2026 02:03:59"), "b.mtreplay")
+    assert august.date_time == "2026-08-31 07:17:59"
+    assert september.date_time == "2026-09-08 02:03:59"
+    assert august.date_time < september.date_time
+
+
+def test_an_unrecognised_date_is_left_alone():
+    assert parse_replay_bytes(build_replay(date_time="whenever"), "b.mtreplay").date_time == "whenever"
+
+
+def test_the_real_nickname_beats_the_anonymised_one():
+    """Enemy names in the results block are fake; realName is the one that is stable."""
+    data = build_replay(
+        player_name="FakeName",
+        players=[{"name": "FakeName", "team": 1, "damage": 100}],
+        real_names={"FakeName": "TrueName"},
+    )
+    assert parse_replay_bytes(data, "b.mtreplay").players[0].name == "TrueName"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("germany-G89_Leopard1", "Leopard1"),
+    ("ussr:R43_IS-7", "IS-7"),
+    ("IS-7", "IS-7"),
+])
+def test_vehicle_names_survive_both_separators_and_their_own_hyphens(raw, expected):
+    assert _vehicle_name(raw) == expected

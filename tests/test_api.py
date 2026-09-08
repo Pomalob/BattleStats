@@ -292,3 +292,34 @@ def test_usernames_differing_only_in_case_are_the_same_account(client):
     assert client.post("/api/auth/register", json={"username": "pomalob", "password": "other123"}).status_code == 409
     res = client.post("/api/auth/login", json={"username": "POMALOB", "password": "secret123"})
     assert res.status_code == 200 and res.json()["username"] == "Pomalob"
+
+
+# --- the min_battles filter ---
+
+def test_analytics_reports_how_many_players_the_filter_hides(client, auth, fake_db):
+    headers = auth()
+    battle = _upload(client, headers).json()["battles"][0]
+    client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
+
+    summary = client.get("/api/analytics/summary?min_battles=1", headers=headers).json()
+    assert summary["players_total"] == 2 and len(summary["players"]) == 2
+    assert summary["min_battles"] == 1
+
+    # With hundreds of battles uploaded, most names appear once and bury the rest.
+    summary = client.get("/api/analytics/summary?min_battles=5", headers=headers).json()
+    assert summary["players"] == [] and summary["players_total"] == 2
+
+
+def test_the_tank_table_shows_the_same_players_as_the_filtered_summary(client, auth, fake_db):
+    headers = auth()
+    battle = _upload(client, headers).json()["battles"][0]
+    client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
+
+    summary = client.get("/api/analytics/summary?min_battles=5", headers=headers).json()
+    assert summary["vehicles"] == []
+
+
+@pytest.mark.parametrize("requested,expected", [(0, 1), (-5, 1), (1000, 100)])
+def test_min_battles_is_clamped(client, auth, requested, expected):
+    res = client.get(f"/api/analytics/summary?min_battles={requested}", headers=auth())
+    assert res.json()["min_battles"] == expected

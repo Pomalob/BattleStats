@@ -17,6 +17,8 @@
     border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px;
   }
   .hidden-label { font-size: 12px; color: var(--text-muted); }
+  .filter-group { display: flex; align-items: center; gap: 8px; }
+  .filter-label { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
   .vehicle-name { font-size: 11.5px; color: var(--text-muted); }
   .cell-date { color: var(--text-muted); font-size: 12px; }
   .cell-file {
@@ -96,6 +98,9 @@
   const contentEl = document.getElementById('content');
 
   const DETAILS = { vehicles: 'Танки', maps: 'Карты', battles: 'Бои' };
+  const MIN_BATTLES = [1, 3, 5, 10];
+  let _minBattles = Number(localStorage.getItem('sb_min_battles'));
+  if (!MIN_BATTLES.includes(_minBattles)) _minBattles = 3;
   let _detail = localStorage.getItem('sb_detail');
   if (!DETAILS[_detail]) _detail = 'vehicles';
   let _data = null;
@@ -151,6 +156,14 @@
       localStorage.setItem('sb_detail', _detail);
       return renderDetail();
     }
+    const min = e.target.closest('[data-min]');
+    if (min) {
+      const value = Number(min.dataset.min);
+      if (value === _minBattles) return;
+      _minBattles = value;
+      localStorage.setItem('sb_min_battles', String(value));
+      return load();
+    }
     const hide = e.target.closest('[data-hide]');
     if (hide) return hidePlayer(hide.dataset.hide);
     const show = e.target.closest('[data-show]');
@@ -173,7 +186,7 @@
   }
 
   function render() {
-    const { totals, players, hidden = [] } = _data;
+    const { totals, players, hidden = [], players_total = players.length } = _data;
     const total  = Number(totals.total_battles ?? 0);
     const wins   = Number(totals.wins   ?? 0);
     const losses = Number(totals.losses ?? 0);
@@ -183,7 +196,7 @@
 
     contentEl.innerHTML = `
       ${total === 0 ? renderEmpty() : ''}
-      ${renderSummary(total, wins, losses, draws, wr, lr, totals, players.length)}
+      ${renderSummary(total, wins, losses, draws, wr, lr, totals, players_total)}
       ${renderHidden(hidden)}
       ${renderPlayers(players)}
       <div id="detail-table"></div>
@@ -245,7 +258,15 @@
   }
 
   function renderPlayers(players) {
-    if (!players.length) return '';
+    if (!players.length) {
+      const total = Number(_data.players_total ?? 0);
+      if (!total) return '';
+      return tableCard(
+        'Игроки',
+        `ни один из ${total} ${plural(total, 'игрока', 'игроков', 'игроков')} не прошёл порог`,
+        '', emptyRow('Понизь порог, чтобы увидеть остальных'), minBattlesTabs(),
+      );
+    }
 
     const maxOf = key => Math.max(...players.map(p => Number(p[key]) || 0), 1);
     const maxDmg = maxOf('avg_damage'), maxAst = maxOf('avg_assists'), maxBlk = maxOf('avg_blocked');
@@ -299,8 +320,23 @@
       <th></th>
     </tr>`;
 
-    const meta = `${players.length} ${plural(players.length, 'игрок', 'игрока', 'игроков')} · сортировка по ср. урону`;
-    return tableCard('Игроки', meta, head, rows);
+    const total = Number(_data.players_total ?? players.length);
+    const shown = players.length === total
+      ? `${players.length} ${plural(players.length, 'игрок', 'игрока', 'игроков')}`
+      : `${players.length} из ${total}`;
+    const meta = `${shown} · сортировка по ср. урону`;
+    return tableCard('Игроки', meta, head, rows, minBattlesTabs());
+  }
+
+  function minBattlesTabs() {
+    return `<div class="filter-group">
+      <span class="filter-label">Мин. боёв</span>
+      <div class="segmented" role="tablist" aria-label="Минимум боёв">
+        ${MIN_BATTLES.map(n =>
+          `<button type="button" role="tab" data-min="${n}" aria-selected="${n === _minBattles}">${n}</button>`
+        ).join('')}
+      </div>
+    </div>`;
   }
 
   function detailTabs() {
@@ -458,7 +494,7 @@
   async function load() {
     contentEl.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div> Загружаем данные…</div>`;
     const [summaryRes, battlesRes] = await Promise.all([
-      api(`/api/analytics/summary?mine=${_mineOnly}`),
+      api(`/api/analytics/summary?mine=${_mineOnly}&min_battles=${_minBattles}`),
       api(`/api/battles?mine=${_mineOnly}`),
     ]);
     const data = await summaryRes.json();

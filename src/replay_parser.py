@@ -11,19 +11,25 @@ _MT_MAGIC = bytes([0x12, 0x32, 0x34, 0x11])
 # A replay block is JSON metadata; anything above a few MB is malformed or hostile.
 _MAX_BLOCK_SIZE = 32 * 1024 * 1024
 
+# Only a fallback: a replay carries mapDisplayName, which is what actually gets used.
+# Every entry below was read out of a real replay.
 MAP_NAMES: dict[str, str] = {
     "01_karelia":           "Карелия",
     "02_malinovka":         "Малиновка",
     "04_himmelsdorf":       "Химмельсдорф",
     "05_prohorovka":        "Прохоровка",
+    "06_ensk":              "Энск",
     "07_lakeville":         "Ласвилль",
     "08_ruinberg":          "Руинберг",
     "10_hills":             "Рудники",
     "11_murovanka":         "Мурованка",
     "13_erlenberg":         "Эрленберг",
+    "17_munchen":           "Уайдпарк",
     "14_siegfried_line":    "Линия Зигфрида",
     "18_cliff":             "Утёс",
     "28_desert":            "Песчаная река",
+    "29_el_hallouf":        "Эль-Халлуф",
+    "33_fjord":             "Фьорды",
     "34_redshire":          "Редшир",
     "35_steppes":           "Степи",
     "36_fishing_bay":       "Рыбацкая бухта",
@@ -33,14 +39,26 @@ MAP_NAMES: dict[str, str] = {
     "47_canada_a":          "Тихий берег",
     "60_asia_miao":         "Жемчужная река",
     "90_minsk":             "Минск",
+    "95_lost_city_ctf":     "Затерянный город",
+    "114_czech":            "Промзона",
     "127_japort":           "Старая гавань",
+    "500_stalingrad":       "Сталинград",
     "503_kaliningrad":      "Калининград",
 }
 
 # Display names that earlier versions wrote into the database with typos.
 MAP_NAME_FIXES: dict[str, str] = {
-    "Песчанаая река": "Песчаная река",
-    "Каллининград":   "Калининград",
+    "Песчанаая река":  "Песчаная река",
+    "Каллининград":    "Калининград",
+    # Written by versions that guessed a name from the map ID instead of reading it
+    # out of the replay.
+    "Ensk":            "Энск",
+    "Munchen":         "Уайдпарк",
+    "El Hallouf":      "Эль-Халлуф",
+    "Fjord":           "Фьорды",
+    "Lost City Ctf":   "Затерянный город",
+    "Czech":           "Промзона",
+    "Stalingrad":      "Сталинград",
 }
 
 
@@ -119,12 +137,46 @@ def _load_json(raw: bytes, what: str):
 
 
 def _vehicle_name(raw: str) -> str:
-    """'ussr:R231_Object_278' -> 'Object 278'"""
+    """'ussr:R231_Object_278' -> 'Object 278'; 'germany-G89_Leopard1' -> 'Leopard1'"""
     if not raw:
         return ""
-    name = raw.split(":")[-1]
-    name = re.sub(r'^[A-Za-z]+\d+_', '', name)  # strip nation prefix: R231_, G100_, Ch45_, etc.
+    # Nations are lower case, so "IS-7" is not mistaken for a prefixed name.
+    name = re.sub(r'^[a-z]+[:-]', '', raw)       # strip nation: "ussr:", "germany-"
+    name = re.sub(r'^[A-Za-z]+\d+_', '', name)   # strip vehicle code: R231_, G100_, Ch45_
     return name.replace("_", " ")
+
+
+_DMY = re.compile(r'^(\d{2})\.(\d{2})\.(\d{4})(.*)$')
+
+
+def _normalise_date(raw: str) -> str:
+    """Replays write 'DD.MM.YYYY HH:MM:SS'.
+
+    date_time is a TEXT column that is sorted and compared as text, so the day has
+    to come last: otherwise 31.08 sorts after 08.09 and every ordering by date,
+    plus the first/last battle in the summary, comes out wrong.
+    """
+    match = _DMY.match((raw or "").strip())
+    if not match:
+        return raw or ""
+    day, month, year, rest = match.groups()
+    return f"{year}-{month}-{day}{rest}"
+
+
+def _real_names(results: dict) -> dict[str, str]:
+    """accountDBID -> real nickname.
+
+    The results block carries anonymised names for the enemy team; realName holds
+    the true one. Using it also keeps battle_hash stable, since two players
+    recording the same battle see different fake names for each other.
+    """
+    names = {}
+    for account, info in (results.get("players") or {}).items():
+        if isinstance(info, dict):
+            name = info.get("realName") or info.get("name")
+            if name:
+                names[str(account)] = name
+    return names
 
 
 def _make_battle_hash(players: list["PlayerResult"], map_name: str) -> str:
@@ -192,8 +244,11 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
         raise ValueError("Битый реплей: блок метаданных не является объектом")
 
     map_internal: str = meta.get("mapName") or ""
-    map_name: str = _map_display(map_internal) if map_internal else (meta.get("mapDisplayName") or "Unknown")
-    date_time: str = meta.get("dateTime", "")
+    # The replay carries the game's own localised name; the table is only a fallback.
+    map_name: str = (meta.get("mapDisplayName") or "").strip() or (
+        _map_display(map_internal) if map_internal else "Unknown"
+    )
+    date_time: str = _normalise_date(meta.get("dateTime", ""))
     player_name: str = meta.get("playerName", "")
 
     # meta vehicles: {arena_vehicle_id: {name, vehicleType, team, ...}}
@@ -208,6 +263,8 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
             player_team = _as_int(v.get("team"))
             player_vehicle = _vehicle_name(v.get("vehicleType", ""))
             break
+    if not player_vehicle:
+        player_vehicle = _vehicle_name(meta.get("playerVehicle", ""))
 
     if not block2_raw:
         # Incomplete replay — no battle results, show roster only
@@ -265,6 +322,7 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
             "Не удалось определить команду игрока — реплей записан не участником боя?"
         )
 
+    real_names = _real_names(results)
     players: list[PlayerResult] = []
 
     for vid, v_list in res_vehicles.items():
@@ -276,7 +334,10 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
         pinfo = players_info.get(vid) or meta_vehicles.get(vid) or {}
         if not isinstance(pinfo, dict):
             pinfo = {}
-        name: str = pinfo.get("name") or pinfo.get("fakeName") or f"id:{vid}"
+        account = str(v.get("accountDBID", ""))
+        name: str = (
+            real_names.get(account) or pinfo.get("name") or pinfo.get("fakeName") or f"id:{vid}"
+        )
         vehicle: str = _vehicle_name(pinfo.get("vehicleType", ""))
 
         players.append(PlayerResult(
