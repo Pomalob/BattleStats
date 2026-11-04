@@ -3,7 +3,7 @@ import struct
 import json
 import hashlib
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # .mtreplay magic bytes (first 4 bytes of file)
 _MT_MAGIC = bytes([0x12, 0x32, 0x34, 0x11])
@@ -62,6 +62,60 @@ MAP_NAME_FIXES: dict[str, str] = {
 }
 
 
+# Extended fields kept under `details`, by the replay's own key names. Experience,
+# awards, game-mode counters and battle pass data are deliberately left out.
+BATTLE_META_FIELDS = (
+    "arenaUniqueID", "mapName", "gameplayID", "battleType", "serverName", "regionCode",
+)
+BATTLE_COMMON_FIELDS = (
+    "winnerTeam", "finishReason", "duration", "arenaCreateTime", "arenaTypeID", "bonusType",
+    "guiType", "teamHealth", "vehLockMode", "finishAllPlayersLeft", "division",
+    "accountCompDescr", "gasAttackWinnerTeam", "commonNumStarted", "commonNumCaptured",
+    "commonNumDefended", "commonNumDestroyed",
+)
+# Belongs to whoever recorded the replay, so it differs between uploads of one battle.
+# clientVersionFromXml is left out: the client writes it in a legacy codepage.
+RECORDER_FIELDS = (
+    "playerName", "playerID", "playerVehicle", "hasMods", "clientVersionFromExe",
+)
+PLAYER_ROSTER_FIELDS = (
+    "name", "fakeName", "vehicleType", "team", "maxHealth", "isAlive", "isTeamKiller", "wtr",
+    "igrType", "avatarSessionID", "badges", "overriddenBadge", "ranked", "selectedComp7Skill",
+    "customRoleSlotTypeId", "vehPostProgression", "personalMissionIDs", "statTrackFrags",
+    "botDisplayStatus", "forbidInBattleInvitations", "clanAbbrev",
+)
+PLAYER_ACCOUNT_FIELDS = ("realName", "clanDBID", "prebattleID")
+PLAYER_RESULT_FIELDS = (
+    "accountDBID", "typeCompDescr",
+    # damage
+    "damageDealt", "sniperDamageDealt", "damageReceived", "damageReceivedFromInvisibles",
+    "potentialDamageReceived", "damageBlockedByArmor", "tdamageDealt",
+    "equipmentDamageDealt", "artilleryFortEquipDamageDealt",
+    # assist
+    "damageAssistedRadio", "damageAssistedTrack", "damageAssistedStun",
+    "damageAssistedSmoke", "damageAssistedInspire",
+    # shooting
+    "shots", "directHits", "directEnemyHits", "directTeamHits", "piercings",
+    "piercingEnemyHits", "explosionHits",
+    # shots taken
+    "directHitsReceived", "piercingsReceived", "noDamageDirectHitsReceived",
+    "explosionHitsReceived",
+    # spotting, stun, kills
+    "spotted", "damaged", "damagedHp", "kills", "tkills", "tdestroyedModules",
+    "isFirstBlood", "stunNum", "stunDuration", "stunned",
+    # death
+    "deathReason", "killerID", "lifeTime", "health", "mileage", "deathCount",
+    # base capture
+    "capturePoints", "droppedCapturePoints", "capturingBase",
+)
+
+
+def _pick(source, fields) -> dict:
+    if not isinstance(source, dict):
+        return {}
+    return {k: source[k] for k in fields if k in source}
+
+
 def _map_display(internal: str) -> str:
     """Translate internal map ID to display name, fall back to cleaned-up ID."""
     if internal in MAP_NAMES:
@@ -86,6 +140,7 @@ class PlayerResult:
     shots: int
     hits: int
     piercings: int
+    details: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -99,6 +154,8 @@ class BattleResult:
     player_vehicle: str
     players: list[PlayerResult]
     complete: bool = True
+    details: dict = field(default_factory=dict)
+    recorder: dict = field(default_factory=dict)
 
     @property
     def result(self) -> str:
@@ -266,6 +323,10 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
     if not player_vehicle:
         player_vehicle = _vehicle_name(meta.get("playerVehicle", ""))
 
+    battle_details = _pick(meta, BATTLE_META_FIELDS)
+    battle_details["mapDisplayName"] = map_name
+    recorder = _pick(meta, RECORDER_FIELDS)
+
     if not block2_raw:
         # Incomplete replay — no battle results, show roster only
         players = [
@@ -298,6 +359,8 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
             player_vehicle=player_vehicle,
             players=players,
             complete=False,
+            details=battle_details,
+            recorder=recorder,
         )
 
     # block2 is a JSON list: [results_dict, players_dict, frags_dict]
@@ -322,7 +385,14 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
             "Не удалось определить команду игрока — реплей записан не участником боя?"
         )
 
+    battle_details.update(_pick(common, BATTLE_COMMON_FIELDS))
+    if "arenaUniqueID" not in battle_details and "arenaUniqueID" in results:
+        battle_details["arenaUniqueID"] = results["arenaUniqueID"]
+
     real_names = _real_names(results)
+    accounts: dict = results.get("players") or {}
+    if not isinstance(accounts, dict):
+        accounts = {}
     players: list[PlayerResult] = []
 
     for vid, v_list in res_vehicles.items():
@@ -340,6 +410,12 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
         )
         vehicle: str = _vehicle_name(pinfo.get("vehicleType", ""))
 
+        # killerID points at this arena vehicle ID, so it is kept alongside the stats.
+        details = {"vehicleID": _as_int(vid)}
+        details.update(_pick(pinfo, PLAYER_ROSTER_FIELDS))
+        details.update(_pick(accounts.get(account), PLAYER_ACCOUNT_FIELDS))
+        details.update(_pick(v, PLAYER_RESULT_FIELDS))
+
         players.append(PlayerResult(
             name=name,
             vehicle=vehicle,
@@ -356,6 +432,7 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
             shots=_as_int(v.get("shots")),
             hits=_as_int(v.get("directHits")),
             piercings=_as_int(v.get("piercings")),
+            details=details,
         ))
 
     players.sort(key=lambda p: (p.team, -p.damage_dealt))
@@ -369,4 +446,6 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
         player_team=player_team,
         player_vehicle=player_vehicle,
         players=players,
+        details=battle_details,
+        recorder=recorder,
     )

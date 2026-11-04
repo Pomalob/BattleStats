@@ -26,6 +26,7 @@ class FakeDB:
         self.battles: dict[int, dict] = {}
         self.owners: set[tuple[int, int]] = set()
         self.hidden: set[tuple[int, str]] = set()
+        self.recorders: dict[tuple[int, int], dict] = {}
         self._next_user_id = 1
         self._next_battle_id = 1
 
@@ -47,15 +48,31 @@ class FakeDB:
             (b for b in self.battles.values() if b["battle_hash"] == battle["battle_hash"]), None
         )
         if existing:
+            self.recorders.setdefault((user_id, existing["id"]), battle.get("recorder"))
             if (user_id, existing["id"]) in self.owners:
                 return "already"
             self.owners.add((user_id, existing["id"]))
             return "linked"
         battle_id = self._next_battle_id
         self._next_battle_id += 1
-        self.battles[battle_id] = {**battle, "id": battle_id}
+        self.battles[battle_id] = {**{k: v for k, v in battle.items() if k != "recorder"}, "id": battle_id}
         self.owners.add((user_id, battle_id))
+        self.recorders[(user_id, battle_id)] = battle.get("recorder")
         return "created"
+
+    def get_battles_export(self, user_id=None, viewer_id=None, date_from=None, date_to=None):
+        rows = []
+        for b in sorted(self.battles.values(), key=lambda b: (b["date_time"], b["id"])):
+            if user_id and (user_id, b["id"]) not in self.owners:
+                continue
+            day = b["date_time"][:10]
+            if (date_from and day < date_from) or (date_to and day > date_to):
+                continue
+            mine = (viewer_id, b["id"]) in self.owners
+            rows.append({**b, "details": b.get("details") or None,
+                         "recorder": self.recorders.get((viewer_id, b["id"])) if mine else None,
+                         "mine": mine})
+        return rows
 
     def get_battles_list(self, user_id=None, viewer_id=None):
         rows = []
@@ -153,7 +170,7 @@ def fake_db(monkeypatch):
         "create_user", "get_user_by_username", "save_battle", "get_battles_list",
         "delete_battle", "get_hidden_players", "hide_player", "unhide_player",
         "get_db_totals", "get_player_summary", "get_map_summary", "get_vehicle_summary",
-        "count_players",
+        "count_players", "get_battles_export",
     ):
         monkeypatch.setattr(app_module, name, getattr(db, name))
     app_module._login_failures.clear()

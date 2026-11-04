@@ -285,3 +285,43 @@ def test_count_players_ignores_the_filter_but_honours_hiding(db, seeded):
 def test_vehicle_summary_can_be_restricted_to_a_set_of_players(db, seeded):
     assert {r["name"] for r in db.get_vehicle_summary(names=["P1"])} == {"P1"}
     assert db.get_vehicle_summary(names=[]) == []
+
+
+def test_export_returns_battles_oldest_first_with_players_and_details(db):
+    alice = db.create_user("alice", "hash")["id"]
+    late = make_battle("h-late", "Карелия", "win", 1, [{"name": "P1", "damage": 100}],
+                       date_time="2025-01-03 10:00:00")
+    early = make_battle("h-early", "Энск", "loss", 2, [{"name": "P1", "damage": 200}],
+                        date_time="2025-01-02 10:00:00")
+    early["details"] = {"arenaUniqueID": 1, "teamHealth": {"1": 100}}
+    early["recorder"] = {"playerName": "alice"}
+    early["players"][0]["details"] = {"accountDBID": 5}
+    db.save_battle(late, user_id=alice)
+    db.save_battle(early, user_id=alice)
+
+    rows = db.get_battles_export(alice, viewer_id=alice)
+    assert [r["battle_hash"] for r in rows] == ["h-early", "h-late"]
+    assert rows[0]["details"] == {"arenaUniqueID": 1, "teamHealth": {"1": 100}}
+    assert rows[0]["recorder"] == {"playerName": "alice"}
+    assert rows[0]["players"][0]["details"] == {"accountDBID": 5}
+    assert rows[1]["details"] is None
+    assert [r["battle_hash"] for r in db.get_battles_export(
+        alice, viewer_id=alice, date_from="2025-01-03", date_to="2025-01-03")] == ["h-late"]
+
+
+def test_uploading_an_old_battle_again_fills_in_its_details(db):
+    alice = db.create_user("alice", "hash")["id"]
+    bare = make_battle("h", "Энск", "win", 1, [{"name": "P1"}, {"name": "E1", "team": 2}])
+    db.save_battle(bare, user_id=alice)
+
+    full = make_battle("h", "Энск", "win", 1, [{"name": "P1"}, {"name": "E1", "team": 2}])
+    full["details"] = {"arenaUniqueID": 9}
+    full["recorder"] = {"playerName": "alice"}
+    for p in full["players"]:
+        p["details"] = {"realName": p["name"]}
+    assert db.save_battle(full, user_id=alice) == "already"
+
+    row = db.get_battles_export(alice, viewer_id=alice)[0]
+    assert row["details"] == {"arenaUniqueID": 9}
+    assert row["recorder"] == {"playerName": "alice"}
+    assert {p["details"]["realName"] for p in row["players"]} == {"P1", "E1"}

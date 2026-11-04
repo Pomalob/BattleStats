@@ -181,3 +181,35 @@ def test_the_real_nickname_beats_the_anonymised_one():
 ])
 def test_vehicle_names_survive_both_separators_and_their_own_hyphens(raw, expected):
     assert _vehicle_name(raw) == expected
+
+
+def test_extended_details_keep_the_chosen_fields_and_drop_the_rest():
+    battle = parse_replay_bytes(
+        build_replay(real_names={"Alice": "Alice"}, players=[
+            {"name": "Alice", "team": 1, "damage": 2400, "sniper_damage": 700, "platoon": 55},
+            {"name": "Carol", "team": 2, "damage": 900, "killer_id": 1, "death_reason": 0},
+        ]),
+        "b.mtreplay",
+    )
+    assert battle.details["arenaUniqueID"] == 7226559141569606
+    assert battle.details["duration"] == 293
+    assert battle.details["teamHealth"] == {"1": 30000, "2": 31000}
+    assert "serverSettings" not in battle.details
+    assert battle.recorder == {"playerName": "Alice", "playerID": 7, "hasMods": True}
+
+    alice = next(p for p in battle.players if p.name == "Alice")
+    assert alice.details["sniperDamageDealt"] == 700
+    assert alice.details["prebattleID"] == 55
+    assert alice.details["clanDBID"] == 589477
+    assert alice.details["vehicleID"] == 1
+    # Economy and game-mode counters are not part of the export.
+    assert "credits" not in alice.details and "winPoints" not in alice.details
+
+    carol = next(p for p in battle.players if p.name == "Carol")
+    assert carol.details["killerID"] == alice.details["vehicleID"]
+
+
+def test_an_unfinished_replay_still_carries_battle_and_recorder_details():
+    battle = parse_replay_bytes(build_replay(with_results=False), "b.mtreplay")
+    assert battle.details["serverName"] == "RU4"
+    assert battle.recorder["playerID"] == 7

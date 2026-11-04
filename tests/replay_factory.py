@@ -53,6 +53,11 @@ def build_replay(
         "mapName": map_name,
         "dateTime": date_time,
         "playerName": player_name,
+        "playerID": 7,
+        "hasMods": True,
+        "arenaUniqueID": 7226559141569606,
+        "serverName": "RU4",
+        "serverSettings": {"comp7_config": {"huge": "block"}},
         "vehicles": meta_vehicles,
     }
     if map_display_name is not None:
@@ -78,6 +83,10 @@ def build_replay(
             "piercings": p.get("piercings", 0),
             "deathReason": p.get("death_reason", -1),
             "accountDBID": 1000 + i,
+            "sniperDamageDealt": p.get("sniper_damage", 0),
+            "killerID": p.get("killer_id", 0),
+            "credits": 15000,      # economy: must not reach the export
+            "winPoints": 0,        # game-mode counter: must not reach the export
         }]
         for i, p in enumerate(players)
     }
@@ -90,12 +99,13 @@ def build_replay(
         for i, p in enumerate(players)
     }
 
-    common = {"winnerTeam": winner_team}
+    common = {"winnerTeam": winner_team, "duration": 293, "finishReason": 1, "teamHealth": {"1": 30000, "2": 31000}}
     results_block = {"common": common, "vehicles": res_vehicles}
     if real_names:
         results_block["players"] = {
             str(1000 + i): {"name": p["name"], "realName": real_names.get(p["name"], p["name"]),
-                            "team": p.get("team", 1)}
+                            "team": p.get("team", 1), "prebattleID": p.get("platoon", 0),
+                            "clanDBID": 589477}
             for i, p in enumerate(players)
         }
     if not drop_personal:

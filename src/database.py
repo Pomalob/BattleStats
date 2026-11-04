@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import Json, RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 
 from config import DATABASE_URL, DB_POOL_MAX, DB_POOL_MIN
@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS battles (
     result      TEXT NOT NULL,
     player_team INTEGER NOT NULL,
     winner_team INTEGER NOT NULL,
+    details     JSONB,
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -43,12 +44,14 @@ CREATE TABLE IF NOT EXISTS player_stats (
     survived        BOOLEAN NOT NULL DEFAULT FALSE,
     shots           INTEGER NOT NULL DEFAULT 0,
     hits            INTEGER NOT NULL DEFAULT 0,
-    piercings       INTEGER NOT NULL DEFAULT 0
+    piercings       INTEGER NOT NULL DEFAULT 0,
+    details         JSONB
 );
 
 CREATE TABLE IF NOT EXISTS user_battles (
     user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     battle_id INTEGER NOT NULL REFERENCES battles(id) ON DELETE CASCADE,
+    recorder  JSONB,
     PRIMARY KEY (user_id, battle_id)
 );
 
@@ -146,6 +149,9 @@ def init_db():
         _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS shots INTEGER NOT NULL DEFAULT 0")
         _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS hits INTEGER NOT NULL DEFAULT 0")
         _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS piercings INTEGER NOT NULL DEFAULT 0")
+        _run_migration(conn, "ALTER TABLE battles ADD COLUMN IF NOT EXISTS details JSONB")
+        _run_migration(conn, "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS details JSONB")
+        _run_migration(conn, "ALTER TABLE user_battles ADD COLUMN IF NOT EXISTS recorder JSONB")
         # Fails if the table already holds names that differ only by case; that is a
         # data problem to resolve by hand, not a reason to block startup.
         _run_migration(conn, "CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_key ON users (lower(username))")
@@ -221,30 +227,37 @@ def save_battle(battle_dict: dict, user_id: int) -> str:
 
     Returns "created" (new battle), "linked" (someone had already uploaded this battle
     and it is now in this user's history too) or "already" (nothing changed).
+
+    A battle stored before extended details were parsed gets them from the next
+    upload of the same replay, so old history can be filled in by uploading it again.
     """
     sql_battle = """
-        INSERT INTO battles (filename, map_name, date_time, battle_hash, result, player_team, winner_team)
-        VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(battle_hash)s, %(result)s, %(player_team)s, %(winner_team)s)
+        INSERT INTO battles (filename, map_name, date_time, battle_hash, result, player_team, winner_team, details)
+        VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(battle_hash)s, %(result)s, %(player_team)s, %(winner_team)s, %(details)s)
         ON CONFLICT (battle_hash) DO NOTHING
         RETURNING id
     """
     sql_player = """
         INSERT INTO player_stats
             (battle_id, name, vehicle, team, damage_dealt, damage_received,
-             blocked, assists, frags, xp, survived, shots, hits, piercings)
+             blocked, assists, frags, xp, survived, shots, hits, piercings, details)
         VALUES
             (%(battle_id)s, %(name)s, %(vehicle)s, %(team)s, %(damage_dealt)s,
              %(damage_received)s, %(blocked)s, %(assists)s, %(frags)s, %(xp)s, %(survived)s,
-             %(shots)s, %(hits)s, %(piercings)s)
+             %(shots)s, %(hits)s, %(piercings)s, %(details)s)
     """
+    details = _json_or_null(battle_dict.get("details"))
+    recorder = _json_or_null(battle_dict.get("recorder"))
+    players = [{**p, "details": _json_or_null(p.get("details"))} for p in battle_dict["players"]]
+
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql_battle, battle_dict)
+            cur.execute(sql_battle, {**battle_dict, "details": details})
             row = cur.fetchone()
 
             if row:
                 battle_id = row["id"]
-                for p in battle_dict["players"]:
+                for p in players:
                     cur.execute(sql_player, {**p, "battle_id": battle_id})
                 outcome = "created"
             else:
@@ -255,17 +268,46 @@ def save_battle(battle_dict: dict, user_id: int) -> str:
                 existing = cur.fetchone()
                 battle_id = existing["id"] if existing else None
                 outcome = "already"
+                if battle_id and details is not None:
+                    _backfill_details(cur, battle_id, details, players)
 
             if battle_id:
                 cur.execute(
-                    "INSERT INTO user_battles (user_id, battle_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                    (user_id, battle_id),
+                    "INSERT INTO user_battles (user_id, battle_id, recorder) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                    (user_id, battle_id, recorder),
                 )
                 # A battle someone else uploaded is not a duplicate for this user: the
                 # row already existed, but it has only now joined their history.
                 if outcome == "already" and cur.rowcount:
                     outcome = "linked"
+                elif recorder is not None:
+                    cur.execute(
+                        "UPDATE user_battles SET recorder = %s"
+                        " WHERE user_id = %s AND battle_id = %s AND recorder IS NULL",
+                        (recorder, user_id, battle_id),
+                    )
     return outcome
+
+
+def _json_or_null(value):
+    return Json(value) if value else None
+
+
+def _backfill_details(cur, battle_id: int, details, players: list[dict]) -> None:
+    """Fill in extended details on a battle that was stored without them."""
+    cur.execute(
+        "UPDATE battles SET details = %s WHERE id = %s AND details IS NULL",
+        (details, battle_id),
+    )
+    if not cur.rowcount:
+        return
+    for p in players:
+        if p["details"] is not None:
+            cur.execute(
+                "UPDATE player_stats SET details = %s"
+                " WHERE battle_id = %s AND name = %s AND details IS NULL",
+                (p["details"], battle_id, p["name"]),
+            )
 
 
 def get_battles_list(user_id: int | None = None, viewer_id: int | None = None) -> list[dict]:
@@ -285,6 +327,56 @@ def get_battles_list(user_id: int | None = None, viewer_id: int | None = None) -
         with conn.cursor() as cur:
             cur.execute(sql, [*params, viewer_id])
             return [dict(r) for r in cur.fetchall()]
+
+
+def get_battles_export(
+    user_id: int | None = None,
+    viewer_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict]:
+    """Every battle in scope with all its players, oldest first.
+
+    date_from / date_to are inclusive YYYY-MM-DD days, compared against the date part
+    of date_time. The recorder block is the viewer's own upload of the battle, if any.
+    """
+    join, params = _scope_join(user_id)
+    where, where_params = [], []
+    if date_from:
+        where.append("left(b.date_time, 10) >= %s")
+        where_params.append(date_from)
+    if date_to:
+        where.append("left(b.date_time, 10) <= %s")
+        where_params.append(date_to)
+    sql_battles = f"""
+        SELECT b.id, b.date_time, b.map_name, b.result, b.winner_team, b.player_team,
+               b.battle_hash, b.filename, b.details,
+               own.recorder, (own.user_id IS NOT NULL) AS mine
+        FROM battles b
+        {join}
+        LEFT JOIN user_battles own ON own.battle_id = b.id AND own.user_id = %s
+        {"WHERE " + " AND ".join(where) if where else ""}
+        ORDER BY b.date_time, b.id
+    """
+    sql_players = """
+        SELECT battle_id, name, vehicle, team, damage_dealt, damage_received, blocked,
+               assists, frags, xp, survived, shots, hits, piercings, details
+        FROM player_stats
+        WHERE battle_id = ANY(%s)
+        ORDER BY battle_id, team, damage_dealt DESC, id
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql_battles, [*params, viewer_id, *where_params])
+            battles = [dict(r) for r in cur.fetchall()]
+            if not battles:
+                return []
+            by_id = {b["id"]: {**b, "players": []} for b in battles}
+            cur.execute(sql_players, ([b["id"] for b in battles],))
+            for r in cur.fetchall():
+                player = dict(r)
+                by_id[player.pop("battle_id")]["players"].append(player)
+    return list(by_id.values())
 
 
 def delete_battle(battle_id: int, user_id: int) -> str:

@@ -3,12 +3,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import re
 import threading
 import time
 import traceback
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -16,11 +19,14 @@ import config
 import database
 from auth import create_token, decode_token, hash_password, verify_password
 from database import (
-    create_user, delete_battle, get_battles_list, get_db_totals, get_hidden_players,
+    create_user, delete_battle, get_battles_export, get_battles_list, get_db_totals, get_hidden_players,
     count_players, get_map_summary, get_player_summary, get_user_by_username, get_vehicle_summary,
     hide_player, init_db, save_battle, unhide_player,
 )
-from replay_parser import parse_replay_bytes
+from replay_parser import (
+    BATTLE_COMMON_FIELDS, BATTLE_META_FIELDS, PLAYER_ACCOUNT_FIELDS, PLAYER_RESULT_FIELDS,
+    PLAYER_ROSTER_FIELDS, RECORDER_FIELDS, parse_replay_bytes,
+)
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
@@ -43,6 +49,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="StatsBattle", lifespan=lifespan)
+# An export of a few hundred battles is tens of megabytes of repetitive JSON.
+app.add_middleware(GZipMiddleware, minimum_size=4096)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -119,6 +127,8 @@ def battle_to_dict(b) -> dict:
         "player_team": b.player_team,
         "player_vehicle": b.player_vehicle,
         "complete": b.complete,
+        "details": b.details,
+        "recorder": b.recorder,
         "players": [
             {
                 "name": p.name,
@@ -134,6 +144,7 @@ def battle_to_dict(b) -> dict:
                 "shots": p.shots,
                 "hits": p.hits,
                 "piercings": p.piercings,
+                "details": p.details,
             }
             for p in b.players
         ],
@@ -268,6 +279,39 @@ _PLAYER_FIELDS = {
     "shots": int, "hits": int, "piercings": int,
 }
 _MAX_TEXT = 200
+_BATTLE_DETAIL_KEYS = frozenset((*BATTLE_META_FIELDS, "mapDisplayName", *BATTLE_COMMON_FIELDS))
+_RECORDER_KEYS = frozenset(RECORDER_FIELDS)
+_PLAYER_DETAIL_KEYS = frozenset(
+    ("vehicleID", *PLAYER_ROSTER_FIELDS, *PLAYER_ACCOUNT_FIELDS, *PLAYER_RESULT_FIELDS)
+)
+_MAX_NESTED_ITEMS = 64
+
+
+def _clean_value(value, depth: int = 0):
+    """A JSON value as the replay could have written it: scalars, plus the short lists
+    and maps some fields hold (badges, teamHealth). Anything else is dropped."""
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value if abs(value) < 2 ** 63 else None
+    if isinstance(value, float):
+        return value if value == value and abs(value) != float("inf") else None
+    if isinstance(value, str):
+        return value[:_MAX_TEXT]
+    if depth >= 2:
+        return None
+    if isinstance(value, list):
+        return [_clean_value(v, depth + 1) for v in value[:_MAX_NESTED_ITEMS]]
+    if isinstance(value, dict):
+        return {str(k)[:_MAX_TEXT]: _clean_value(v, depth + 1)
+                for k, v in list(value.items())[:_MAX_NESTED_ITEMS]}
+    return None
+
+
+def _clean_details(raw, allowed: frozenset) -> dict:
+    if not isinstance(raw, dict):
+        return {}
+    return {k: _clean_value(v) for k, v in raw.items() if k in allowed}
 
 
 def _coerce(value, kind):
@@ -300,8 +344,12 @@ def _clean_battle(raw) -> dict:
     # contradict the teams it is supposed to follow from.
     battle["result"] = _battle_result(battle["winner_team"], battle["player_team"])
 
+    battle["details"] = _clean_details(raw.get("details"), _BATTLE_DETAIL_KEYS)
+    battle["recorder"] = _clean_details(raw.get("recorder"), _RECORDER_KEYS)
+
     battle["players"] = [
-        {k: _coerce(p.get(k), kind) for k, kind in _PLAYER_FIELDS.items()}
+        {**{k: _coerce(p.get(k), kind) for k, kind in _PLAYER_FIELDS.items()},
+         "details": _clean_details(p.get("details"), _PLAYER_DETAIL_KEYS)}
         for p in raw["players"] if isinstance(p, dict)
     ]
     if not battle["players"]:
@@ -352,6 +400,42 @@ def remove_battle(battle_id: int, user: dict = Depends(require_user)):
     if outcome == "not_found":
         raise HTTPException(404, "Бой не найден среди твоих загрузок")
     return {"battle_id": battle_id, "outcome": outcome}
+
+
+_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.get("/api/export")
+def export_battles(
+    mine: bool = True,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user: dict = Depends(require_user),
+):
+    """Every battle in scope with all stored fields, oldest first, as a JSON file."""
+    require_db()
+    for value in (date_from, date_to):
+        if value and not _DAY.match(value):
+            raise HTTPException(400, "Дата — в формате ГГГГ-ММ-ДД")
+    viewer_id = user["id"]
+    battles = get_battles_export(
+        viewer_id if mine else None, viewer_id=viewer_id, date_from=date_from, date_to=date_to,
+    )
+    now = datetime.now(timezone.utc)
+    body = {
+        "exported_at": now.isoformat(timespec="seconds"),
+        "user": user["username"],
+        "scope": "mine" if mine else "all",
+        "date_from": date_from,
+        "date_to": date_to,
+        "total_battles": len(battles),
+        # Battles stored before extended parsing; uploading the replay again fills them in.
+        "battles_without_details": sum(1 for b in battles if not b.get("details")),
+        "hidden_players": get_hidden_players(viewer_id),
+        "battles": battles,
+    }
+    filename = f"battlestats_{body['scope']}_{now:%Y%m%d_%H%M}.json"
+    return JSONResponse(body, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 # --- Hidden players ---

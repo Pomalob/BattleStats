@@ -323,3 +323,69 @@ def test_the_tank_table_shows_the_same_players_as_the_filtered_summary(client, a
 def test_min_battles_is_clamped(client, auth, requested, expected):
     res = client.get(f"/api/analytics/summary?min_battles={requested}", headers=auth())
     assert res.json()["min_battles"] == expected
+
+
+# --- export ---
+
+def _save(client, headers, **replay):
+    battle = _upload(client, headers, data=build_replay(**replay)).json()["battles"][0]
+    client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
+    return battle
+
+
+def test_export_requires_a_token(client):
+    assert client.get("/api/export").status_code == 401
+
+
+def test_export_returns_every_field_oldest_first_as_a_file(client, auth, fake_db):
+    headers = auth()
+    _save(client, headers, date_time="03.01.2025 10:00:00", winner_team=2)
+    _save(client, headers, date_time="02.01.2025 10:00:00", map_name="01_karelia")
+
+    res = client.get("/api/export", headers=headers)
+    assert res.status_code == 200
+    assert res.headers["content-disposition"].startswith('attachment; filename="battlestats_mine_')
+    body = res.json()
+    assert body["total_battles"] == 2 and body["battles_without_details"] == 0
+    assert [b["date_time"][:10] for b in body["battles"]] == ["2025-01-02", "2025-01-03"]
+
+    battle = body["battles"][0]
+    assert battle["details"]["arenaUniqueID"] == 7226559141569606
+    assert battle["recorder"]["playerName"] == "Alice"
+    assert battle["players"][0]["details"]["accountDBID"] >= 1000
+
+
+def test_export_filters_by_day_inclusive(client, auth, fake_db):
+    headers = auth()
+    for day in ("01", "02", "03"):
+        _save(client, headers, date_time=f"{day}.01.2025 10:00:00", map_name=f"0{day}_map")
+    body = client.get("/api/export?date_from=2025-01-02&date_to=2025-01-02", headers=headers).json()
+    assert [b["date_time"][:10] for b in body["battles"]] == ["2025-01-02"]
+
+
+def test_export_rejects_a_malformed_date(client, auth):
+    assert client.get("/api/export?date_from=02.01.2025", headers=auth()).status_code == 400
+
+
+def test_export_of_mine_leaves_out_other_peoples_battles(client, auth, fake_db):
+    _save(client, auth("first"))
+    second = auth("second")
+    assert client.get("/api/export", headers=second).json()["total_battles"] == 0
+    shared = client.get("/api/export?mine=false", headers=second).json()["battles"]
+    assert len(shared) == 1 and shared[0]["recorder"] is None
+
+
+def test_save_keeps_only_known_detail_fields(client, auth, fake_db):
+    headers = auth()
+    battle = _upload(client, headers).json()["battles"][0]
+    battle["details"]["injected"] = "x"
+    battle["details"]["duration"] = {"deep": {"deeper": {"deepest": 1}}}
+    battle["players"][0]["details"]["credits"] = 10 ** 9
+    battle["players"][0]["details"]["shots"] = "x" * 5000
+    client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
+
+    stored = next(iter(fake_db.battles.values()))
+    assert "injected" not in stored["details"]
+    assert stored["details"]["duration"] == {"deep": {"deeper": None}}
+    assert "credits" not in stored["players"][0]["details"]
+    assert len(stored["players"][0]["details"]["shots"]) == 200

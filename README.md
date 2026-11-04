@@ -56,10 +56,10 @@ uvicorn src.app:app --reload
 pytest
 ```
 
-90 тестов без базы: парсер реплеев, аутентификация, конфигурация, разбор `DATABASE_URL`
+111 тестов без базы: парсер реплеев, аутентификация, конфигурация, разбор `DATABASE_URL`
 и все эндпоинты API поверх подменённого слоя базы.
 
-Ещё 16 тестов проверяют агрегирующий SQL на настоящем Postgres и пропускаются,
+Ещё 21 тест проверяет агрегирующий SQL и выгрузку на настоящем Postgres и пропускается,
 если не задан `TEST_DATABASE_URL`. Поднять базу можно через compose:
 
 ```bash
@@ -134,12 +134,39 @@ DATABASE_URL="postgresql://..." python scripts/clear_db.py
 | `GET` | `/api/battles?mine=` | Список боёв |
 | `DELETE` | `/api/battles/{id}` | Убрать бой из своей истории |
 | `GET` | `/api/analytics/summary?mine=` | Агрегаты: итоги, игроки, карты, танки |
+| `GET` | `/api/export?mine=&date_from=&date_to=` | Все бои со всеми полями по порядку дат, JSON-файлом |
 | `GET` | `/api/players/hidden` | Скрытые игроки |
 | `POST` | `/api/players/hidden` | Скрыть игрока (`{"name": "..."}`) |
 | `DELETE` | `/api/players/hidden/{name}` | Вернуть игрока |
 | `GET` | `/healthz` | Health check: `200` если база отвечает, иначе `503` |
 
 Интерактивная схема — `/docs`.
+
+### Выгрузка в JSON
+
+На странице аналитики есть кнопка «Скачать JSON» — она выгружает бои текущего охвата.
+То же самое без браузера:
+
+```bash
+TOKEN=$(curl -s -X POST https://battlestats.onrender.com/api/auth/login \
+  -H 'Content-Type: application/json' -d '{"username":"...","password":"..."}' | jq -r .token)
+curl --compressed -H "Authorization: Bearer $TOKEN" \
+  "https://battlestats.onrender.com/api/export?mine=true&date_from=2026-09-01" -o battlestats.json
+```
+
+- `mine` — `true` (по умолчанию) только свои бои, `false` — все.
+- `date_from`, `date_to` — `ГГГГ-ММ-ДД`, включительно. Оба необязательны.
+- Бои идут от старых к новым. У каждого боя: `details` (сервер, режим, длительность,
+  причина окончания, HP команд, `arenaUniqueID`), `recorder` (кто записал реплей — только для
+  своих загрузок) и `players` — основные колонки плюс `details` с полной статистикой из реплея:
+  `accountDBID`, клан, взвод (`prebattleID`), урон с разбивкой, ассист по видам, стрельба,
+  полученные попадания, засвет, оглушение, смерть (`killerID` ссылается на `details.vehicleID`).
+  Названия полей — как в самом реплее.
+- Опыт, кредиты, медали, боевой пропуск и поля особых режимов не выгружаются.
+- Бои, сохранённые до появления расширенных полей, приходят с `details: null` — их число в
+  `battles_without_details`. Повторная загрузка тех же реплеев дописывает детали в уже сохранённые бои.
+
+Ответ сжимается gzip: 750 боёв — около 24 МБ JSON и 2 МБ по сети.
 
 ## Структура
 
