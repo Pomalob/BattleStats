@@ -1,6 +1,7 @@
+import ipaddress
 import threading
 from contextlib import contextmanager
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
@@ -75,15 +76,41 @@ _pool: ThreadedConnectionPool | None = None
 _pool_lock = threading.Lock()
 
 
+def _is_internal_host(host: str) -> bool:
+    """Same machine or a private network: a container name without a dot, or a private IP.
+
+    Hosting platforms reach their own Postgres over an internal network that usually
+    has no certificate, so requiring TLS there only breaks the connection.
+    """
+    if host in _LOCAL_HOSTS or "." not in host and ":" not in host:
+        return True
+    try:
+        return ipaddress.ip_address(host).is_private
+    except ValueError:
+        return False
+
+
+# TLS options a connection string may carry. `ssl` is not a libpq option at all, but
+# platform dashboards paste it in, and libpq refuses to connect over an unknown one.
+_TLS_PARAMS = {"sslmode", "ssl", "channel_binding"}
+
+
 def build_dsn(url: str) -> str:
-    """Normalise a DATABASE_URL: postgres:// -> postgresql://, TLS for remote hosts."""
+    """Normalise a DATABASE_URL: postgres:// -> postgresql://, TLS for remote hosts only."""
     if not url:
         raise RuntimeError("DATABASE_URL not set")
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
-    # Managed Postgres (Neon, Render, Railway) requires TLS; a local container has none.
-    host = (urlsplit(url).hostname or "").lower()
-    if "sslmode" not in url and host not in _LOCAL_HOSTS:
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if _is_internal_host(host):
+        # A Postgres reachable only from the platform's private network serves no TLS,
+        # and asking for it fails with "server does not support SSL connections".
+        query = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() not in _TLS_PARAMS]
+        query.append(("sslmode", "disable"))
+        return urlunsplit(parts._replace(query=urlencode(query)))
+    # Managed Postgres (Neon, Render, Railway) requires TLS.
+    if "sslmode" not in url:
         url += ("&" if "?" in url else "?") + "sslmode=require"
     return url
 
