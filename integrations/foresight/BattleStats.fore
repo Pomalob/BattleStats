@@ -1,0 +1,688 @@
+// BattleStats -> Форсайт. Аналитическая платформа
+//
+// Две процедуры:
+//   Setup - один раз: создаёт таблицы, справочники и стандартный куб BS_CUBE.
+//   Main  - при каждом обновлении: перезаливает таблицы боёв и игроков и пересобирает
+//           справочники измерений. Куб читает таблицы напрямую, отдельно его обновлять не нужно.
+//
+// Источник данных для Main (константа SOURCE):
+//   "site" - сайт по REST: /api/export/table/battles и /api/export/table/players;
+//   "csv"  - два файла из  python export_to_table.py battlestats.json --bi
+//            (battlestats_bi_battles.csv и battlestats_bi_players.csv), колонки те же.
+//
+// Что создаёт Setup (префикс BS_):
+//   таблицы       BS_BATTLES (строка на бой), BS_PLAYERS (строка на игрока в бою),
+//                 BS_FACTS и BS_D_* - элементы справочников;
+//   справочники   BS_DIM_FACTS (факты), BS_DIM_DAY, BS_DIM_MAP, BS_DIM_VEHICLE,
+//                 BS_DIM_PLAYER, BS_DIM_OUTCOME, BS_DIM_SIDE;
+//   куб           BS_CUBE на таблице BS_PLAYERS.
+//
+// Ссылки модуля (Свойства модуля -> Ссылки):
+//   Collections, Cubes, Db, Dimensions, Dt, IO, Metabase, Net.
+// Для SOURCE = "site" адрес сайта должен быть в белом списке хостов репозитория
+// (политика репозитория, HostWhiteList), иначе REST-запросы будут отклонены.
+// Для автообновления: Планировщик задач -> задача выполнения модуля -> процедура Main.
+
+// --- Настройки ---
+Const SOURCE = "site";
+// Сайт
+Const BASE_URL = "https://battlestats.relaxdev.ru";
+Const USER_NAME = "логин_на_сайте";
+Const USER_PASSWORD = "пароль_на_сайте";
+// "true" - только бои, которые загружал этот пользователь; "false" - все бои в базе.
+Const MINE = "true";
+// Пусто - вся история; иначе ГГГГ-ММ-ДД, бои начиная с этого дня включительно.
+Const DATE_FROM = "";
+// Файлы для SOURCE = "csv"
+Const CSV_BATTLES = "C:\\BattleStats\\battlestats_bi_battles.csv";
+Const CSV_PLAYERS = "C:\\BattleStats\\battlestats_bi_players.csv";
+// Для Setup: идентификатор объекта «База данных» репозитория, где создаются таблицы,
+// и папка для новых объектов (пусто - корень репозитория).
+Const DATABASE_ID = "DB";
+Const FOLDER_ID = "";
+
+// Идентификаторы объектов
+Const TABLE_BATTLES = "BS_BATTLES";
+Const TABLE_PLAYERS = "BS_PLAYERS";
+Const TABLE_FACTS = "BS_FACTS";
+Const DIM_FACTS = "BS_DIM_FACTS";
+Const CUBE_ID = "BS_CUBE";
+
+
+// Колонки BS_BATTLES: имя:тип, I - целое, F - вещественное, S<n> - строка длиной n.
+// Совпадает с /api/export/table/battles (проверяется тестом tests/test_foresight_module.py).
+Function BattleColumns: String;
+Begin
+    Return
+    "id:I;day:S32;date_time:S64;map_name:S64;result:S16;mine:I;player_team:I;winner_team:I;" +
+    "battle_hash:S64;filename:S255;playerName:S32;playerID:I;playerVehicle:S128;hasMods:I;" +
+    "clientVersionFromExe:S16;arenaUniqueID:S64;mapName:S64;gameplayID:S32;battleType:I;" +
+    "serverName:S16;regionCode:S16;winnerTeam:I;finishReason:I;duration:I;arenaCreateTime:I;" +
+    "arenaTypeID:I;bonusType:I;guiType:I;teamHealth:S64;vehLockMode:I;finishAllPlayersLeft:I;" +
+    "division:I;accountCompDescr:I;gasAttackWinnerTeam:I;commonNumStarted:I;" +
+    "commonNumCaptured:I;commonNumDefended:I;commonNumDestroyed:I";
+End Function BattleColumns;
+
+
+// Колонки BS_PLAYERS. result - исход для записавшего реплей, outcome и win - для самого игрока.
+Function PlayerColumns: String;
+Begin
+    Return
+    "battle_id:I;day:S32;date_time:S64;map_name:S64;result:S16;outcome:S16;win:I;mine:I;" +
+    "ally:I;name:S64;vehicle:S64;team:I;damage_dealt:I;damage_received:I;blocked:I;assists:I;" +
+    "frags:I;xp:I;survived:I;shots:I;hits:I;piercings:I;vehicleID:I;realName:S64;clanDBID:I;" +
+    "prebattleID:I;fakeName:S64;vehicleType:S128;maxHealth:I;isAlive:I;isTeamKiller:I;wtr:I;" +
+    "igrType:I;avatarSessionID:S16;badges:S64;overriddenBadge:I;ranked:S16;" +
+    "selectedComp7Skill:I;customRoleSlotTypeId:I;vehPostProgression:S256;" +
+    "personalMissionIDs:S32;statTrackFrags:I;botDisplayStatus:I;forbidInBattleInvitations:I;" +
+    "clanAbbrev:S16;accountDBID:I;typeCompDescr:I;damageDealt:I;sniperDamageDealt:I;" +
+    "damageReceived:I;damageReceivedFromInvisibles:I;potentialDamageReceived:I;" +
+    "damageBlockedByArmor:I;tdamageDealt:I;equipmentDamageDealt:I;" +
+    "artilleryFortEquipDamageDealt:I;damageAssistedRadio:I;damageAssistedTrack:I;" +
+    "damageAssistedStun:I;damageAssistedSmoke:I;damageAssistedInspire:I;directHits:I;" +
+    "directEnemyHits:I;directTeamHits:I;piercingEnemyHits:I;explosionHits:I;" +
+    "directHitsReceived:I;piercingsReceived:I;noDamageDirectHitsReceived:I;" +
+    "explosionHitsReceived:I;spotted:I;damaged:I;damagedHp:I;kills:I;tkills:I;" +
+    "tdestroyedModules:I;isFirstBlood:I;stunNum:I;stunDuration:F;stunned:I;deathReason:I;" +
+    "killerID:I;lifeTime:I;health:I;mileage:I;deathCount:I;capturePoints:I;" +
+    "droppedCapturePoints:I;capturingBase:I";
+End Function PlayerColumns;
+
+
+// Факты куба: Наименование|Агрегация|Поле BS_PLAYERS, ключ факта - номер по порядку с 1.
+// CALC - вычисляемый факт, вместо поля формула; @[N] - значение факта с ключом N.
+// Каждая строка BS_PLAYERS - один игрок в одном бою, поэтому «Бои» - число таких строк.
+Function FactColumns: String;
+Begin
+    Return
+    "Бои|COUNT|BATTLE_ID;Победы|SUM|WIN;Урон|SUM|DAMAGE_DEALT;Ассист|SUM|ASSISTS;" +
+    "Заблокировано|SUM|BLOCKED;Получено урона|SUM|DAMAGE_RECEIVED;Фраги|SUM|FRAGS;" +
+    "Выжил|SUM|SURVIVED;Выстрелы|SUM|SHOTS;Попадания|SUM|HITS;Пробития|SUM|PIERCINGS;" +
+    "Засвет|SUM|SPOTTED;" +
+    "Средний урон|CALC|@[3]/@[1];Средний ассист|CALC|@[4]/@[1];" +
+    "Процент побед|CALC|@[2]/@[1]*100;Точность, %|CALC|@[10]/@[9]*100;" +
+    "Выживаемость, %|CALC|@[8]/@[1]*100";
+End Function FactColumns;
+
+
+// Измерения куба: Таблица элементов|Справочник|Наименование|Поле BS_PLAYERS|Тип ключа (S или I).
+// Первые четыре пересобираются из данных в Main, последние два постоянные и заполняются в Setup.
+Function DimColumns: String;
+Begin
+    Return
+    "BS_D_DAY|BS_DIM_DAY|День|DAY|S;BS_D_MAP|BS_DIM_MAP|Карта|MAP_NAME|S;" +
+    "BS_D_VEHICLE|BS_DIM_VEHICLE|Танк|VEHICLE|S;BS_D_PLAYER|BS_DIM_PLAYER|Игрок|NAME|S;" +
+    "BS_D_OUTCOME|BS_DIM_OUTCOME|Исход для игрока|OUTCOME|S;BS_D_SIDE|BS_DIM_SIDE|Сторона|ALLY|I";
+End Function DimColumns;
+
+// Сколько первых измерений из DimColumns собирается из данных.
+Const DATA_DIMS = 4;
+
+
+// ============================== Main ==============================
+
+Sub Main;
+Var
+    Token: String;
+    Dims, Dim: Array Of String;
+    i: Integer;
+Begin
+    If SOURCE = "csv" Then
+        LoadTable(OpenCsv(CSV_BATTLES), TABLE_BATTLES);
+        LoadTable(OpenCsv(CSV_PLAYERS), TABLE_PLAYERS);
+    Else
+        Token := GetToken;
+        LoadTable(OpenSite("battles", Token), TABLE_BATTLES);
+        LoadTable(OpenSite("players", Token), TABLE_PLAYERS);
+    End If;
+
+    Dims := Split(DimColumns, ";");
+    For i := 0 To DATA_DIMS - 1 Do
+        Dim := Split(Dims[i], "|");
+        RebuildDim(Dim[0], Dim[3]);
+    End For;
+End Sub Main;
+
+
+// Источник «сайт»: JSON {"columns": [...], "total": N, "rows": [{...}, ...]}, строки - rows.
+Function OpenSite(Kind: String; Token: String): IDtProvider;
+Var
+    Rest: IDtRestProvider;
+    Json: IDtJsonProvider;
+    Url: String;
+Begin
+    Url := BASE_URL + "/api/export/table/" + Kind + "?mine=" + MINE;
+    If DATE_FROM <> "" Then
+        Url := Url + "&date_from=" + DATE_FROM;
+    End If;
+    Rest := New DtRestProvider.Create;
+    Rest.Url := Url;
+    Rest.Timeout := 600;
+    Rest.Headers.Add("Authorization: Bearer " + Token);
+    Rest.Headers.Add("Accept: application/json");
+    Rest.ResultType := DtRestProviderResultType.Json;
+    Json := Rest.ResultProvider As IDtJsonProvider;
+    Json.Query := "$.rows[*]";
+    // Тип колонки определяется по первым строкам, а в начале истории много пустых полей.
+    Rest.TypeGuessRows := 5000;
+    Return Rest;
+End Function OpenSite;
+
+
+// Источник «CSV»: ";" между полями, UTF-8 без BOM, первая строка - имена колонок.
+Function OpenCsv(Path: String): IDtProvider;
+Var
+    Text: IDtTextProvider;
+Begin
+    Text := New DtTextProvider.Create;
+    Text.File := Path;
+    Text.RangeHasHeader := True;
+    Text.DelimitedColumnDelimiter := ";";
+    Text.DelimitedTextQualifier := """";
+    Text.RowDelimiter := #13 + #10;
+    Text.TextCodePage := CodePage.UTF8;
+    Text.StringDataFormat.DecimalDelimiter := ".";
+    Text.TypeGuessRows := 5000;
+    Text.FieldsFromFile;
+    Return Text;
+End Function OpenCsv;
+
+
+// Вход на сайт: POST /api/auth/login, в ответе {"token":"...","username":"..."}.
+// Токен живёт несколько дней, поэтому берётся заново при каждом запуске.
+Function GetToken: String;
+Var
+    Service: INetHttpService;
+    Cmd: INetCommand;
+    HttpCmd: INetHttpCommand;
+    Answer, Marker: String;
+    Start, Finish: Integer;
+Begin
+    Service := New NetHttpService.Create;
+    Service.Url := BASE_URL + "/api/auth/login";
+    Cmd := Service.Connect;
+    HttpCmd := Cmd As INetHttpCommand;
+    HttpCmd.Command := NetHttpCommandType.Post;
+    HttpCmd.OuterBody := True;
+    HttpCmd.ConnectionTimeout := 30;
+    HttpCmd.Timeout := 60;
+    HttpCmd.Headers.Add("Content-Type: application/json; charset=utf-8");
+    HttpCmd.Headers.Add("Accept: application/json");
+    // Логин и пароль подставляются как есть: в них не должно быть кавычек и обратной косой черты.
+    Cmd.Start("{""username"": """ + USER_NAME + """, ""password"": """ + USER_PASSWORD + """}");
+    Answer := VariantToString(Cmd.Result);
+
+    Marker := """token"":""";
+    Start := Answer.IndexOf(Marker);
+    If Start < 0 Then
+        Raise New Exception.Create("BattleStats: вход не удался. Ответ сайта: " + Answer);
+    End If;
+    Start := Start + Marker.Length;
+    Finish := Answer.SubString(Start, Answer.Length - Start).IndexOf("""");
+    Return Answer.SubString(Start, Finish);
+End Function GetToken;
+
+
+// Ответ NetHttpService приходит строкой или потоком байт - приводим к строке UTF-8.
+Function VariantToString(Value: Variant): String;
+Var
+    Stream: IIOStream;
+    Reader: ITextReader;
+Begin
+    If Value.IsNull Then
+        Return "";
+    End If;
+    If Value Is String Then
+        Return Value As String;
+    End If;
+    Stream := New MemoryStream.Create;
+    Stream.CopyFrom(IOStream.FromVariant(Value), -1);
+    Stream.Position := 0;
+    Reader := New TextReader.Create(Stream);
+    Reader.Encoding := CodePage.UTF8;
+    Return Reader.ReadToEnd;
+End Function VariantToString;
+
+
+// Полная перезаливка таблицы из источника. Поля таблицы и колонки источника
+// сопоставляются по имени без учёта регистра: поле DAMAGE_DEALT получает damage_dealt.
+Sub LoadTable(Source: IDtProvider; TableId: String);
+Var
+    Consumer: IDtMetabaseConsumer;
+    Src, Dst: IDtFieldDefinitions;
+    Map: Array Of Integer;
+    Row: Array;
+    OutRow: Array Of Variant;
+    i, j, Count: Integer;
+Begin
+    Source.Open;
+    Src := Source.Fields;
+    Consumer := OpenConsumer(TableId);
+    Dst := Consumer.Fields;
+
+    // Для каждого поля таблицы - номер колонки источника с тем же именем, -1 если такой нет.
+    Map := New Integer[Dst.Count];
+    For i := 0 To Dst.Count - 1 Do
+        Map[i] := -1;
+        For j := 0 To Src.Count - 1 Do
+            If Src.Item(j).Name.ToUpper = Dst.Item(i).Name.ToUpper Then
+                Map[i] := j;
+            End If;
+        End For;
+        If Map[i] < 0 Then
+            Debug.WriteLine("BattleStats: в источнике нет колонки " + Dst.Item(i).Name + ", поле " + TableId + " останется пустым");
+        End If;
+    End For;
+
+    OutRow := New Variant[Dst.Count];
+    Count := 0;
+    While Not Source.Eof Do
+        Source.Fetch(Row);
+        For i := 0 To Dst.Count - 1 Do
+            If Map[i] >= 0 Then
+                OutRow[i] := Row[Map[i]];
+            Else
+                OutRow[i] := Null;
+            End If;
+        End For;
+        Consumer.Put(OutRow);
+        Count := Count + 1;
+    End While;
+    Consumer.Close;
+    Source.Close;
+    Debug.WriteLine("BattleStats: " + TableId + " - загружено строк: " + Count.ToString);
+End Sub LoadTable;
+
+
+// Приёмник «таблица репозитория», открытый и уже очищенный. Поля - как в таблице.
+Function OpenConsumer(TableId: String): IDtMetabaseConsumer;
+Var
+    Table: IDatasetModel;
+    TableFields: IDatasetModelFields;
+    Consumer: IDtMetabaseConsumer;
+    Field: IDtFieldDefinition;
+    i: Integer;
+Begin
+    Table := MetabaseClass.Active.ItemById(TableId).Bind As IDatasetModel;
+    TableFields := Table.Fields;
+    Consumer := New DtMetabaseConsumer.Create;
+    Consumer.Dataset := Table;
+    Consumer.ClearFields;
+    For i := 0 To TableFields.Count - 1 Do
+        Field := Consumer.Fields.Add;
+        Field.Name := TableFields.Item(i).Id;
+        Field.DataType := TableFields.Item(i).DataType;
+    End For;
+    Consumer.Open;
+    Consumer.Clear;
+    Return Consumer;
+End Function OpenConsumer;
+
+
+// Пересобирает таблицу элементов справочника (KEY, NAME, ORD) из уникальных значений
+// колонки Column таблицы BS_PLAYERS. Порядок - по алфавиту, для дней это порядок дат.
+Sub RebuildDim(DimTable: String; Column: String);
+Var
+    Provider: IDtMetabaseProvider;
+    Consumer: IDtMetabaseConsumer;
+    Seen: IHashtable;
+    Keys: IArrayList;
+    Row: Array;
+    OutRow: Array Of Variant;
+    Col, i: Integer;
+    Value: String;
+Begin
+    Provider := New DtMetabaseProvider.Create;
+    Provider.Dataset := MetabaseClass.Active.ItemById(TABLE_PLAYERS).Bind As IDatasetModel;
+    Provider.Open;
+    Col := -1;
+    For i := 0 To Provider.Fields.Count - 1 Do
+        If Provider.Fields.Item(i).Name.ToUpper = Column Then
+            Col := i;
+        End If;
+    End For;
+    If Col < 0 Then
+        Raise New Exception.Create("BattleStats: в " + TABLE_PLAYERS + " нет поля " + Column);
+    End If;
+
+    Seen := New Hashtable.Create;
+    Keys := New ArrayList.Create;
+    While Not Provider.Eof Do
+        Provider.Fetch(Row);
+        If Not Row[Col].IsNull Then
+            Value := Row[Col] As String;
+            If (Value <> "") And (Not Seen.Contains(Value)) Then
+                Seen.Add(Value, 1);
+                Keys.Add(Value);
+            End If;
+        End If;
+    End While;
+    Provider.Close;
+    Keys.Sort;
+
+    Consumer := OpenConsumer(DimTable);
+    OutRow := New Variant[3];
+    For i := 0 To Keys.Count - 1 Do
+        OutRow[0] := Keys.Item(i);
+        OutRow[1] := Keys.Item(i);
+        OutRow[2] := i + 1;
+        Consumer.Put(OutRow);
+    End For;
+    Consumer.Close;
+    Debug.WriteLine("BattleStats: " + DimTable + " - элементов: " + Keys.Count.ToString);
+End Sub RebuildDim;
+
+
+// ============================== Setup ==============================
+
+Sub Setup;
+Var
+    Dims, Dim: Array Of String;
+    i: Integer;
+Begin
+    CreateTable(TABLE_BATTLES, "BattleStats: бои", BattleColumns);
+    CreateTable(TABLE_PLAYERS, "BattleStats: игроки в боях", PlayerColumns);
+    CreateTable(TABLE_FACTS, "BattleStats: факты куба", "key:I;name:S64;ord:I");
+    FillFacts;
+
+    Dims := Split(DimColumns, ";");
+    For i := 0 To Dims.Length - 1 Do
+        Dim := Split(Dims[i], "|");
+        If Dim[4] = "I" Then
+            CreateTable(Dim[0], "BattleStats: " + Dim[2], "key:I;name:S128;ord:I");
+        Else
+            CreateTable(Dim[0], "BattleStats: " + Dim[2], "key:S128;name:S128;ord:I");
+        End If;
+    End For;
+    FillFixedDims;
+
+    CreateDictionary(DIM_FACTS, "BattleStats: факты", TABLE_FACTS, DbDataType.Integer);
+    For i := 0 To Dims.Length - 1 Do
+        Dim := Split(Dims[i], "|");
+        If Dim[4] = "I" Then
+            CreateDictionary(Dim[1], "BattleStats: " + Dim[2], Dim[0], DbDataType.Integer);
+        Else
+            CreateDictionary(Dim[1], "BattleStats: " + Dim[2], Dim[0], DbDataType.String);
+        End If;
+    End For;
+
+    CreateCube;
+    Debug.WriteLine("BattleStats: структура готова, теперь запустите Main");
+End Sub Setup;
+
+
+Sub FillFacts;
+Var
+    Facts, Fact: Array Of String;
+    Consumer: IDtMetabaseConsumer;
+    OutRow: Array Of Variant;
+    i: Integer;
+Begin
+    Facts := Split(FactColumns, ";");
+    Consumer := OpenConsumer(TABLE_FACTS);
+    OutRow := New Variant[3];
+    For i := 0 To Facts.Length - 1 Do
+        Fact := Split(Facts[i], "|");
+        OutRow[0] := i + 1;
+        OutRow[1] := Fact[0];
+        OutRow[2] := i + 1;
+        Consumer.Put(OutRow);
+    End For;
+    Consumer.Close;
+End Sub FillFacts;
+
+
+// Постоянные измерения: исход боя для игрока и сторона относительно записавшего реплей.
+Sub FillFixedDims;
+Var
+    Consumer: IDtMetabaseConsumer;
+    OutRow: Array Of Variant;
+Begin
+    OutRow := New Variant[3];
+    Consumer := OpenConsumer("BS_D_OUTCOME");
+    OutRow[0] := "win"; OutRow[1] := "Победа"; OutRow[2] := 1; Consumer.Put(OutRow);
+    OutRow[0] := "loss"; OutRow[1] := "Поражение"; OutRow[2] := 2; Consumer.Put(OutRow);
+    OutRow[0] := "draw"; OutRow[1] := "Ничья"; OutRow[2] := 3; Consumer.Put(OutRow);
+    Consumer.Close;
+
+    Consumer := OpenConsumer("BS_D_SIDE");
+    OutRow[0] := 1; OutRow[1] := "Союзники"; OutRow[2] := 1; Consumer.Put(OutRow);
+    OutRow[0] := 0; OutRow[1] := "Противники"; OutRow[2] := 2; Consumer.Put(OutRow);
+    Consumer.Close;
+End Sub FillFixedDims;
+
+
+Function Folder: IMetabaseObjectDescriptor;
+Begin
+    If FOLDER_ID = "" Then
+        Return MetabaseClass.Active.Root;
+    End If;
+    Return MetabaseClass.Active.ItemById(FOLDER_ID);
+End Function Folder;
+
+
+Function ObjectExists(Id: String): Boolean;
+Var
+    Descr: IMetabaseObjectDescriptor;
+Begin
+    Try
+        Descr := MetabaseClass.Active.ItemById(Id);
+    Except
+        Return False;
+    End Try;
+    Return Descr <> Null;
+End Function ObjectExists;
+
+
+// Таблица по описанию "имя:тип;...". Идентификатор поля - имя в верхнем регистре.
+// Уже существующая таблица не трогается, поэтому Setup можно запускать повторно.
+Sub CreateTable(Id: String; Name: String; Spec: String);
+Var
+    MB: IMetabase;
+    CrInfo: IMetabaseObjectCreateInfo;
+    MObj: IMetabaseObject;
+    Table: ITable;
+    Field: ITableField;
+    Cols, Pair: Array Of String;
+    i: Integer;
+Begin
+    If ObjectExists(Id) Then
+        Debug.WriteLine("BattleStats: " + Id + " уже есть, пропускаю");
+        Return;
+    End If;
+    MB := MetabaseClass.Active;
+    CrInfo := MB.CreateCreateInfo;
+    CrInfo.ClassID := MetabaseObjectClass.KE_CLASS_TABLE;
+    CrInfo.Id := Id;
+    CrInfo.Name := Name;
+    CrInfo.Parent := Folder;
+    MObj := MB.CreateObject(CrInfo).Edit;
+    Table := MObj As ITable;
+    Table.Database := MB.ItemById(DATABASE_ID).Bind As IDatabase;
+    Cols := Split(Spec, ";");
+    For i := 0 To Cols.Length - 1 Do
+        Pair := Split(Cols[i], ":");
+        Field := Table.Fields.Add;
+        Field.Id := Pair[0].ToUpper;
+        Field.Name := Pair[0];
+        If Pair[1] = "I" Then
+            Field.DataType := DbDataType.Integer;
+        Else
+            If Pair[1] = "F" Then
+                Field.DataType := DbDataType.Float;
+            Else
+                Field.DataType := DbDataType.String;
+                Field.Size := CInt(Pair[1].SubString(1, Pair[1].Length - 1));
+            End If;
+        End If;
+    End For;
+    Table.NativeName := Id;
+    MObj.Save;
+    Debug.WriteLine("BattleStats: создана таблица " + Id);
+End Sub CreateTable;
+
+
+// Табличный справочник на таблице элементов с полями KEY, NAME, ORD.
+Sub CreateDictionary(Id: String; Name: String; TableId: String; KeyType: DbDataType);
+Var
+    MB: IMetabase;
+    CrInfo: IMetabaseObjectCreateInfo;
+    MObj: IMetabaseObject;
+    Dim: IStandardDimension;
+    Attrs: IStandardDimAttributes;
+    Attr: IStandardDimAttribute;
+    Index, BlockIndex: IStandardDimIndex;
+    Block: IStandardDimBlock;
+Begin
+    If ObjectExists(Id) Then
+        Debug.WriteLine("BattleStats: " + Id + " уже есть, пропускаю");
+        Return;
+    End If;
+    MB := MetabaseClass.Active;
+    CrInfo := MB.CreateCreateInfo;
+    CrInfo.ClassID := MetabaseObjectClass.KE_CLASS_STDDIM;
+    CrInfo.Id := Id;
+    CrInfo.Name := Name;
+    CrInfo.Parent := Folder;
+    MObj := MB.CreateObject(CrInfo).Edit;
+    Dim := MObj As IStandardDimension;
+
+    // Атрибуты с назначениями «Идентификатор», «Наименование», «Порядок».
+    Attrs := Dim.Attributes;
+    Attr := Attrs.Add;
+    Attr.Id := "KEY";
+    Attr.Name := "Ключ";
+    Attr.DataType := KeyType;
+    Attrs.Id := Attr;
+    Attr := Attrs.Add;
+    Attr.Id := "NAME";
+    Attr.Name := "Наименование";
+    Attr.DataType := DbDataType.String;
+    Attrs.Name := Attr;
+    Attr := Attrs.Add;
+    Attr.Id := "ORD";
+    Attr.Name := "Порядок";
+    Attr.DataType := DbDataType.Integer;
+    Attrs.Order := Attr;
+
+    // Первичный уникальный индекс по ключу - через него куб связывает справочник с данными.
+    Index := Dim.Indexes.Add;
+    Index.Id := "PRIMARY_INDEX";
+    Index.Name := "Первичный индекс";
+    Index.Primary := True;
+    Index.Unique := True;
+    Index.Attributes.Add(Attrs.Id);
+
+    // Один нерекурсивный блок на таблице элементов.
+    Block := Dim.Blocks.Add(DimBlockType.NotRecursive);
+    BlockIndex := Block.Indexes.PrimaryIndex;
+    If BlockIndex.Attributes.Count = 0 Then
+        BlockIndex.Attributes.Add(Attrs.Id);
+    End If;
+    Block.Dataset := MB.ItemById(TableId).Bind As IDatasetModel;
+    Block.Binding(Attrs.Id).AsString := TableId + ".KEY";
+    Block.Binding(Attrs.Name).AsString := TableId + ".NAME";
+    Block.Binding(Attrs.Order).AsString := TableId + ".ORD";
+    MObj.Save;
+    Debug.WriteLine("BattleStats: создан справочник " + Id);
+End Sub CreateDictionary;
+
+
+// Стандартный куб на BS_PLAYERS: факты из BS_DIM_FACTS, измерения из DimColumns.
+Sub CreateCube;
+Var
+    MB: IMetabase;
+    CrInfo: IMetabaseObjectCreateInfo;
+    MObj: IMetabaseObject;
+    StdCube: IStandardCube;
+    Dest: IStandardCubeDestination;
+    FactDim, CubeDim: IStandardCubeDimension;
+    Dataset: IStandardCubeDataset;
+    FactDimInst: IDimInstance;
+    KeyAttr: IDimAttributeInstance;
+    FactBindings: IStandardCubeFactBindings;
+    FactBinding: IStandardCubeFactBinding;
+    DimBinding: IStandardCubeDimensionBinding;
+    DimIndex: IDimIndex;
+    Facts, Fact, Dims, Dim: Array Of String;
+    Key: Variant;
+    i: Integer;
+Begin
+    If ObjectExists(CUBE_ID) Then
+        Debug.WriteLine("BattleStats: " + CUBE_ID + " уже есть, пропускаю");
+        Return;
+    End If;
+    MB := MetabaseClass.Active;
+    CrInfo := MB.CreateCreateInfo;
+    CrInfo.ClassID := MetabaseObjectClass.KE_CLASS_STDCUBE;
+    CrInfo.Id := CUBE_ID;
+    CrInfo.Name := "BattleStats: игроки в боях";
+    CrInfo.Parent := Folder;
+    MObj := MB.CreateObject(CrInfo).Edit;
+    StdCube := MObj As IStandardCube;
+    Dest := StdCube.Destinations.Item(0);
+
+    // Справочник фактов и источник данных.
+    FactDim := Dest.Dimensions.Add(MB.ItemById(DIM_FACTS).Bind As IDimensionModel);
+    StdCube.ExternalFactDimension := True;
+    FactDim.FactDimension := True;
+    Dataset := Dest.Datasets.Add(MB.ItemById(TABLE_PLAYERS).Bind As IDatasetModel);
+
+    // Факты: ключ элемента справочника фактов = номер факта в FactColumns.
+    Facts := Split(FactColumns, ";");
+    FactDimInst := FactDim.OpenDimension;
+    KeyAttr := FactDimInst.Attributes.FindById("KEY");
+    FactBindings := Dest.FactBindings(Dataset);
+    For i := 0 To FactDimInst.Elements.Count - 1 Do
+        Key := KeyAttr.Value(i);
+        Fact := Split(Facts[CInt(Key) - 1], "|");
+        If Fact[1] = "CALC" Then
+            Dest.CalcBindings.Binding(Key).Formula.AsString := Fact[2];
+        Else
+            FactBinding := FactBindings.Binding(Key);
+            FactBinding.Formula.AsString := TABLE_PLAYERS + "." + Fact[2];
+            FactBinding.AggregationType := CubeFactBindingAggregationType.Custom;
+            FactBinding.CustomAggregateFunction := Fact[1];
+            FactBinding.DistinctAggregate := False;
+        End If;
+    End For;
+
+    // Измерения: справочник связывается с полем BS_PLAYERS через первичный индекс.
+    Dims := Split(DimColumns, ";");
+    For i := 0 To Dims.Length - 1 Do
+        Dim := Split(Dims[i], "|");
+        CubeDim := Dest.Dimensions.Add(MB.ItemById(Dim[1]).Bind As IDimensionModel);
+        DimIndex := CubeDim.Dimension.Indexes.PrimaryIndex;
+        DimBinding := CubeDim.Binding(Dataset);
+        DimBinding.Index := DimIndex;
+        DimBinding.Binding(DimIndex.Attributes.Item(0)).AsString := TABLE_PLAYERS + "." + Dim[3];
+    End For;
+
+    MObj.Save;
+    Debug.WriteLine("BattleStats: создан куб " + CUBE_ID);
+End Sub CreateCube;
+
+
+// "a;b;c" -> ["a", "b", "c"]
+Function Split(Text: String; Delimiter: String): Array Of String;
+Var
+    Parts: IArrayList;
+    Rest: String;
+    P, i: Integer;
+    Res: Array Of String;
+Begin
+    Parts := New ArrayList.Create;
+    Rest := Text;
+    P := Rest.IndexOf(Delimiter);
+    While P >= 0 Do
+        Parts.Add(Rest.SubString(0, P));
+        Rest := Rest.SubString(P + Delimiter.Length, Rest.Length - P - Delimiter.Length);
+        P := Rest.IndexOf(Delimiter);
+    End While;
+    Parts.Add(Rest);
+    Res := New String[Parts.Count];
+    For i := 0 To Parts.Count - 1 Do
+        Res[i] := Parts.Item(i) As String;
+    End For;
+    Return Res;
+End Function Split;
