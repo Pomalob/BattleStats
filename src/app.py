@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import json
 import re
 import threading
 import time
@@ -183,8 +184,19 @@ def healthz():
 
 # --- Auth endpoints ---
 
+async def json_body(request: Request) -> dict:
+    """The body as JSON whatever Content-Type says: Fore's NetHttpService and curl -d send other ones."""
+    try:
+        data = json.loads(await request.body() or b"{}")
+    except ValueError:
+        raise HTTPException(400, "Тело запроса должно быть JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Тело запроса должно быть JSON-объектом")
+    return data
+
+
 @app.post("/api/auth/register")
-def register(body: dict, request: Request):
+def register(request: Request, body: dict = Depends(json_body)):
     require_db()
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
@@ -200,7 +212,7 @@ def register(body: dict, request: Request):
 
 
 @app.post("/api/auth/login")
-def login(body: dict, request: Request):
+def login(request: Request, body: dict = Depends(json_body)):
     require_db()
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
@@ -436,6 +448,104 @@ def export_battles(
     }
     filename = f"battlestats_{body['scope']}_{now:%Y%m%d_%H%M}.json"
     return JSONResponse(body, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+# Flat export for BI tools (Foresight, Power BI...) that load one JSON array into one table:
+# every row has the same keys in the same order, every value is a scalar.
+def _unique(*groups) -> tuple:
+    seen = []
+    for group in groups:
+        seen += [k for k in group if k not in seen]
+    return tuple(seen)
+
+
+FLAT_BATTLE_COLUMNS = _unique(
+    ("id", "day", "date_time", "map_name", "result", "mine", "player_team", "winner_team",
+     "battle_hash", "filename"),
+    RECORDER_FIELDS, BATTLE_META_FIELDS, BATTLE_COMMON_FIELDS,
+)
+FLAT_PLAYER_COLUMNS = _unique(
+    # result is the recorder's; outcome and win are this player's own (their team vs winner_team)
+    ("battle_id", "day", "date_time", "map_name", "result", "outcome", "win", "mine", "ally",
+     "name", "vehicle", "team", "damage_dealt", "damage_received", "blocked", "assists",
+     "frags", "xp", "survived", "shots", "hits", "piercings", "vehicleID"),
+    PLAYER_ACCOUNT_FIELDS, PLAYER_ROSTER_FIELDS, PLAYER_RESULT_FIELDS,
+)
+
+
+def _flat_value(value):
+    if isinstance(value, bool):
+        return int(value)
+    # Above 2**53 a double (and so most BI tools) loses digits: arenaUniqueID has 17 of them.
+    if isinstance(value, int) and abs(value) >= 2 ** 53:
+        return str(value)
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return value
+
+
+# One column, one type: arenaUniqueID has 16 or 17 digits, so as a number it would be either.
+_TEXT_COLUMNS = {"arenaUniqueID"}
+
+
+def _flat_row(columns: tuple, *sources: dict) -> dict:
+    merged = {}
+    for source in reversed(sources):  # the first source wins on a clash
+        merged.update(source or {})
+    row = {c: _flat_value(merged.get(c)) for c in columns}
+    for c in _TEXT_COLUMNS.intersection(row):
+        if row[c] is not None:
+            row[c] = str(row[c])
+    return row
+
+
+def _outcome(team, winner_team) -> str | None:
+    if not winner_team:
+        return "draw" if winner_team == 0 else None
+    return "win" if team == winner_team else "loss"
+
+
+def flatten_export(battles: list[dict], kind: str) -> list[dict]:
+    """Rows of one flat table. Also used verbatim by scripts/export_to_table.py --bi (keep in sync)."""
+    if kind == "battles":
+        return [_flat_row(FLAT_BATTLE_COLUMNS, {"day": (b.get("date_time") or "")[:10] or None},
+                          b, b.get("recorder"), b.get("details"))
+                for b in battles]
+    rows = []
+    for b in battles:
+        shared = {"battle_id": b["id"], "day": (b.get("date_time") or "")[:10] or None,
+                  "date_time": b.get("date_time"), "map_name": b.get("map_name"),
+                  "result": b.get("result"), "mine": b.get("mine")}
+        for p in b.get("players", []):
+            outcome = _outcome(p.get("team"), b.get("winner_team"))
+            own = {"ally": p.get("team") == b.get("player_team"), "outcome": outcome,
+                   "win": None if outcome is None else outcome == "win"}
+            rows.append(_flat_row(FLAT_PLAYER_COLUMNS, shared, own, p, p.get("details")))
+    return rows
+
+
+@app.get("/api/export/table/{kind}")
+def export_table(
+    kind: str,
+    mine: bool = True,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user: dict = Depends(require_user),
+):
+    """One flat table: kind=battles (a row per battle) or kind=players (a row per player in a battle)."""
+    require_db()
+    if kind not in ("battles", "players"):
+        raise HTTPException(404, "Таблица — battles или players")
+    for value in (date_from, date_to):
+        if value and not _DAY.match(value):
+            raise HTTPException(400, "Дата — в формате ГГГГ-ММ-ДД")
+    viewer_id = user["id"]
+    battles = get_battles_export(
+        viewer_id if mine else None, viewer_id=viewer_id, date_from=date_from, date_to=date_to,
+    )
+    columns = FLAT_BATTLE_COLUMNS if kind == "battles" else FLAT_PLAYER_COLUMNS
+    rows = flatten_export(battles, kind)
+    return {"table": kind, "columns": list(columns), "total": len(rows), "rows": rows}
 
 
 # --- Hidden players ---
