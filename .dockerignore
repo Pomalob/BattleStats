@@ -1,5 +1,5 @@
 frontend/node_modules
-frontend/dist
+# frontend/dist is committed: the Timeweb app deploys without running npm
 .venv
 **/__pycache__
 .git
