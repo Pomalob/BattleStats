@@ -325,54 +325,12 @@ def test_min_battles_is_clamped(client, auth, requested, expected):
     assert res.json()["min_battles"] == expected
 
 
-# --- export ---
+# --- saving ---
 
 def _save(client, headers, **replay):
     battle = _upload(client, headers, data=build_replay(**replay)).json()["battles"][0]
     client.post("/api/battles/save", json={"battles": [battle]}, headers=headers)
     return battle
-
-
-def test_export_requires_a_token(client):
-    assert client.get("/api/export").status_code == 401
-
-
-def test_export_returns_every_field_oldest_first_as_a_file(client, auth, fake_db):
-    headers = auth()
-    _save(client, headers, date_time="03.01.2025 10:00:00", winner_team=2)
-    _save(client, headers, date_time="02.01.2025 10:00:00", map_name="01_karelia")
-
-    res = client.get("/api/export", headers=headers)
-    assert res.status_code == 200
-    assert res.headers["content-disposition"].startswith('attachment; filename="battlestats_mine_')
-    body = res.json()
-    assert body["total_battles"] == 2 and body["battles_without_details"] == 0
-    assert [b["date_time"][:10] for b in body["battles"]] == ["2025-01-02", "2025-01-03"]
-
-    battle = body["battles"][0]
-    assert battle["details"]["arenaUniqueID"] == 7226559141569606
-    assert battle["recorder"]["playerName"] == "Alice"
-    assert battle["players"][0]["details"]["accountDBID"] >= 1000
-
-
-def test_export_filters_by_day_inclusive(client, auth, fake_db):
-    headers = auth()
-    for day in ("01", "02", "03"):
-        _save(client, headers, date_time=f"{day}.01.2025 10:00:00", map_name=f"0{day}_map")
-    body = client.get("/api/export?date_from=2025-01-02&date_to=2025-01-02", headers=headers).json()
-    assert [b["date_time"][:10] for b in body["battles"]] == ["2025-01-02"]
-
-
-def test_export_rejects_a_malformed_date(client, auth):
-    assert client.get("/api/export?date_from=02.01.2025", headers=auth()).status_code == 400
-
-
-def test_export_of_mine_leaves_out_other_peoples_battles(client, auth, fake_db):
-    _save(client, auth("first"))
-    second = auth("second")
-    assert client.get("/api/export", headers=second).json()["total_battles"] == 0
-    shared = client.get("/api/export?mine=false", headers=second).json()["battles"]
-    assert len(shared) == 1 and shared[0]["recorder"] is None
 
 
 def test_save_keeps_only_known_detail_fields(client, auth, fake_db):
@@ -391,54 +349,8 @@ def test_save_keeps_only_known_detail_fields(client, auth, fake_db):
     assert len(stored["players"][0]["details"]["shots"]) == 200
 
 
-# --- flat export for BI tools ---
-
-def test_flat_battles_have_one_fixed_set_of_scalar_columns(client, auth, fake_db):
-    headers = auth()
-    _save(client, headers, date_time="03.01.2025 10:00:00")
-    _save(client, headers, date_time="02.01.2025 10:00:00", map_name="01_karelia")
-
-    body = client.get("/api/export/table/battles", headers=headers).json()
-    assert body["total"] == 2
-    assert all(list(row) == body["columns"] for row in body["rows"])
-    first, second = body["rows"]
-    assert first["date_time"][:10] == "2025-01-02" and second["date_time"][:10] == "2025-01-03"
-    assert second["arenaUniqueID"] == "7226559141569606"  # text in every row, whatever its length
-    assert second["playerName"] == "Alice" and second["mine"] == 1
-    assert isinstance(second["teamHealth"], str)  # a map, packed into one cell
-    assert all(not isinstance(v, (list, dict, bool)) for row in body["rows"] for v in row.values())
-
-
-def test_flat_players_carry_their_battle(client, auth, fake_db):
-    headers = auth()
-    _save(client, headers)
-    body = client.get("/api/export/table/players", headers=headers).json()
-    battle_id = client.get("/api/battles", headers=headers).json()["battles"][0]["id"]
-    assert body["total"] > 0
-    assert all(list(row) == body["columns"] for row in body["rows"])
-    row = body["rows"][0]
-    assert row["battle_id"] == battle_id and row["ally"] in (0, 1)
-    assert row["day"] == row["date_time"][:10]
-    # each player's own outcome: allies share the recorder's, enemies get the opposite
-    for r in body["rows"]:
-        assert r["outcome"] == ("win" if r["win"] else "loss")
-        assert (r["outcome"] == r["result"]) == bool(r["ally"])
-    assert row["accountDBID"] >= 1000 and "damageAssistedRadio" in row
-    assert body["columns"].count("name") == 1  # roster "name" does not repeat the base column
-
-
-def test_flat_values_that_a_double_would_round_become_text():
-    from app import _flat_value
-    assert _flat_value(24810954728012345) == "24810954728012345"
-    assert _flat_value(True) == 1 and _flat_value([1, 2]) == "[1,2]" and _flat_value(None) is None
-
-
-def test_flat_export_rejects_an_unknown_table(client, auth):
-    assert client.get("/api/export/table/users", headers=auth()).status_code == 404
-
-
 def test_login_accepts_json_sent_without_a_content_type(client):
-    """Fore's NetHttpService and similar clients do not always set Content-Type."""
+    """Some HTTP clients (curl -d, scripts) do not set Content-Type."""
     client.post("/api/auth/register", json={"username": "ivan", "password": "secret123"})
     res = client.post("/api/auth/login", content='{"username": "ivan", "password": "secret123"}')
     assert res.status_code == 200 and res.json()["token"]

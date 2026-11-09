@@ -170,7 +170,7 @@ def fake_db(monkeypatch):
         "create_user", "get_user_by_username", "save_battle", "get_battles_list",
         "delete_battle", "get_hidden_players", "hide_player", "unhide_player",
         "get_db_totals", "get_player_summary", "get_map_summary", "get_vehicle_summary",
-        "count_players", "get_battles_export",
+        "count_players",
     ):
         monkeypatch.setattr(app_module, name, getattr(db, name))
     app_module._login_failures.clear()

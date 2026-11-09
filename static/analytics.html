@@ -71,7 +71,6 @@
         <button type="button" role="tab" data-scope="all"  aria-selected="true">Все бои</button>
         <button type="button" role="tab" data-scope="mine" aria-selected="false">Мои бои</button>
       </div>
-      <button class="btn btn-ghost btn-sm" id="btn-export" title="Все бои текущего охвата со всеми полями, по порядку дат">Скачать JSON</button>
       <span class="user-pill idle" id="user-pill"><span id="user-name">—</span></span>
       <button class="btn btn-ghost btn-sm" id="btn-logout">Выйти</button>
     </div>
@@ -145,28 +144,6 @@
     document.getElementById('user-pill').classList.remove('idle');
   }
   document.getElementById('btn-logout').addEventListener('click', logout);
-
-  const btnExport = document.getElementById('btn-export');
-  btnExport.addEventListener('click', async () => {
-    btnExport.disabled = true;
-    const label = btnExport.textContent;
-    btnExport.textContent = 'Готовим файл…';
-    try {
-      const res = await api(`/api/export?mine=${_mineOnly}`);
-      if (!res.ok) return fail(res);
-      const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1]
-        ?? 'battlestats.json';
-      const url = URL.createObjectURL(await res.blob());
-      const link = Object.assign(document.createElement('a'), { href: url, download: name });
-      document.body.append(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    } finally {
-      btnExport.disabled = false;
-      btnExport.textContent = label;
-    }
-  });
 
   document.getElementById('scope').addEventListener('click', e => {
     const btn = e.target.closest('[data-scope]');
