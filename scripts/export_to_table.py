@@ -1,35 +1,44 @@
 """Turn a /api/export JSON file into tables: one row per battle, one row per player in a battle.
 
 Usage:
-    python scripts/export_to_table.py                                  # newest .json in Nextcloud "battlestats"
-    python scripts/export_to_table.py --remote battlestats_mine.json   # that file from the same folder
+    python scripts/export_to_table.py                                  # download from the site -> battlestats.json + .xlsx
+    python scripts/export_to_table.py --all --date-from 2026-09-01     # every battle, from that day on
     python scripts/export_to_table.py battlestats.json                 # local file -> battlestats.xlsx
     python scripts/export_to_table.py battlestats.json -o stats.csv    # -> stats_battles.csv, stats_players.csv
     python scripts/export_to_table.py battlestats.json --bi            # -> battlestats_bi_battles.csv, ..._bi_players.csv
+    python scripts/export_to_table.py battlestats.json --refs          # -> battlestats_refs.xlsx: players and vehicles
 
-Nextcloud is reached over WebDAV with these environment variables:
-    NEXTCLOUD_URL       https://cloud.example.ru
-    NEXTCLOUD_USER      login
-    NEXTCLOUD_PASSWORD  an app password (Settings -> Security); asked for if not set
-    NEXTCLOUD_FOLDER    folder with the exports, "battlestats" by default
+--refs creates or updates an Excel reference book next to the JSON: a sheet of players
+(account age, rating, battles, win rate from the Lesta Games API; name, age and city are entered
+in Foresight instead), a sheet of vehicles (class, tier, premium, role from game_vehicles.json, which
+scripts/game_vehicles.py writes on the machine with the game; no key needed) and a sheet of
+clans (Stronghold results from the API). Hand-
+filled columns (yellow headers) survive every update. The API needs LESTA_APP_ID, an
+application_id from https://developers.lesta.ru/applications/ ; without it only what the
+replays and the game client know is filled in. --bi then adds these attributes to the CSV for Foresight.
+
+Without a file the export is downloaded from the BattleStats site and saved as battlestats.json:
+    BATTLESTATS_URL       site address, https://battlestats.relaxdev.ru by default
+    BATTLESTATS_USER      login on the site; asked for if not set
+    BATTLESTATS_PASSWORD  password; asked for if not set
 
 Needs nothing beyond the standard library for CSV; .xlsx needs `python -m pip install openpyxl`.
 CSV is written with ";" and a UTF-8 BOM, so Excel with a Russian locale opens it as is.
 """
 import argparse
-import base64
 import csv
 import getpass
+import gzip
 import json
 import os
-import ssl
+import re
 import sys
+import time
 import urllib.error
 import urllib.request
-import xml.etree.ElementTree as ET
-from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote, unquote
+from urllib.parse import urlencode
 
 # Battle columns that come first and get readable headers; the rest of `details` follows.
 BATTLE_COLUMNS = [
@@ -285,92 +294,532 @@ def write_xlsx(path: Path, sheets: list[tuple[str, list[str], list[list]]]) -> N
     wb.save(path)
 
 
-class Nextcloud:
-    """Just enough WebDAV to list one folder and download a file from it."""
+SITE_URL = "https://battlestats.relaxdev.ru"
 
-    def __init__(self, url: str, user: str, password: str, verify_tls: bool = True):
-        url = url.rstrip("/")
-        token = base64.b64encode(f"{user}:{password}".encode()).decode()
-        self.headers = {"Authorization": f"Basic {token}", "OCS-APIRequest": "true"}
-        self.context = None if verify_tls else ssl._create_unverified_context()
-        self.base = f"{url}/remote.php/dav/files/{quote(self._user_id(url, user))}/"
 
-    def _user_id(self, url: str, login: str) -> str:
-        """The account ID the files live under. With LDAP/AD sign-in it can differ from the login."""
-        req = urllib.request.Request(f"{url}/ocs/v2.php/cloud/user?format=json", headers=self.headers)
+def _http(url: str, data: bytes | None = None, headers: dict | None = None) -> tuple[int, dict, bytes]:
+    """(status, headers, body) of one request; HTTP errors come back as a status, not an exception."""
+    req = urllib.request.Request(url, data=data, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            return resp.status, dict(resp.headers), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers or {}), e.read()
+    except urllib.error.URLError as e:
+        sys.exit(f"Не удалось подключиться к {url}: {e.reason}")
+
+
+def _site_error(body: bytes) -> str:
+    try:
+        return json.loads(body).get("detail") or ""
+    except (ValueError, AttributeError):
+        return ""
+
+
+def load_from_site(mine: bool, date_from: str | None, date_to: str | None) -> tuple[bytes, str]:
+    """Log in to the BattleStats site and download /api/export. Returns the JSON and its file name."""
+    url = (os.environ.get("BATTLESTATS_URL") or SITE_URL).rstrip("/")
+    user = os.environ.get("BATTLESTATS_USER") or input(f"Логин на {url}: ").strip()
+    password = os.environ.get("BATTLESTATS_PASSWORD") or getpass.getpass(f"Пароль для {user}: ")
+
+    status, _, body = _http(f"{url}/api/auth/login",
+                            json.dumps({"username": user, "password": password}).encode(),
+                            {"Content-Type": "application/json"})
+    if status != 200:
+        sys.exit(f"Вход на {url} не удался ({status}): {_site_error(body) or 'неизвестная ошибка'}")
+    token = json.loads(body)["token"]
+
+    query = {"mine": "true" if mine else "false"}
+    query.update({k: v for k, v in (("date_from", date_from), ("date_to", date_to)) if v})
+    print(f"Скачиваю выгрузку с {url} ...")
+    status, headers, body = _http(f"{url}/api/export?{urlencode(query)}",
+                                  headers={"Authorization": f"Bearer {token}", "Accept-Encoding": "gzip"})
+    if status != 200:
+        sys.exit(f"Сайт не отдал выгрузку ({status}): {_site_error(body) or 'неизвестная ошибка'}")
+    headers = {k.lower(): v for k, v in headers.items()}
+    if headers.get("content-encoding") == "gzip":  # about 2 MB over the wire instead of 24
+        body = gzip.decompress(body)
+    name = re.search(r'filename="([^"]+)"', headers.get("content-disposition", ""))
+    return body, name.group(1) if name else "battlestats.json"
+
+
+# --- Reference book: player and vehicle attributes the replays do not have -----------------
+
+LESTA_API = "https://api.tanki.su/wot"
+VEHICLE_CLASSES = {"heavyTank": "ТТ", "mediumTank": "СТ", "lightTank": "ЛТ", "AT-SPG": "ПТ-САУ", "SPG": "САУ"}
+NATIONS = {
+    "ussr": "СССР", "germany": "Германия", "usa": "США", "china": "Китай", "france": "Франция",
+    "uk": "Великобритания", "japan": "Япония", "czech": "Чехословакия", "sweden": "Швеция",
+    "poland": "Польша", "italy": "Италия", "intunion": "Сборная нация",
+}
+
+# (key, header, source): "replay" - from the export, "api" - Lesta Games API, "manual" - by hand.
+PLAYER_REF_COLUMNS = [
+    ("account_id", "ID аккаунта", "replay"),
+    ("nickname", "Ник", "replay"),
+    ("clan", "Клан", "replay"),
+    ("battles_seen", "Боёв в наших реплеях", "replay"),
+    ("created_at", "Аккаунт создан", "api"),
+    ("account_age_days", "Возраст аккаунта, дней", "api"),
+    ("global_rating", "Личный рейтинг", "api"),
+    ("battles_total", "Боёв всего", "api"),
+    ("winrate_total", "Процент побед, %", "api"),
+    ("last_battle", "Последний бой", "api"),
+    # Name, age, city and comment are entered in Foresight (a registry form over an MDM dictionary,
+    # see integrations/foresight), not here: there they are live attributes of the player dimension.
+]
+VEHICLE_REF_COLUMNS = [
+    ("tank_id", "ID танка", "replay"),
+    ("vehicle", "Танк", "replay"),
+    ("tag", "Тег", "replay"),
+    ("nation", "Нация", "replay"),
+    ("api_name", "Название в танкопедии", "api"),
+    ("vehicle_class", "Класс", "api"),
+    ("tier", "Уровень", "api"),
+    ("is_premium", "Премиум", "api"),
+    ("is_wheeled", "Колёсный", "api"),
+    ("hp", "Прочность", "api"),
+    ("role", "Роль", "manual_auto"),  # from the game client; a hand-filled value wins
+    ("comment", "Комментарий", "manual"),
+]
+# Clan strength is judged by Stronghold (Укрепрайон) results on tier X - skirmishes plus
+# battles for the stronghold - not by its members' averages, which twinks and newcomers skew.
+CLAN_REF_COLUMNS = [
+    ("clan_id", "ID клана", "replay"),
+    ("tag", "Тег", "replay"),
+    ("players_seen", "Игроков в наших реплеях", "replay"),
+    ("name", "Название", "api"),
+    ("members", "Участников", "api"),
+    ("created_at", "Клан создан", "api"),
+    ("stronghold_level", "Уровень Укрепрайона", "api"),
+    ("ur_battles", "Боёв в УР (X)", "api"),
+    ("ur_winrate", "% побед в УР (X)", "api"),
+    ("ur_battles_28d", "Боёв в УР за 28 дней", "api"),
+    ("ur_winrate_28d", "% побед в УР за 28 дней", "api"),
+    ("strength", "Сила клана", "api"),
+    ("comment", "Комментарий", "manual"),
+]
+REF_SHEETS = (
+    ("Игроки", "account_id", PLAYER_REF_COLUMNS),
+    ("Танки", "tank_id", VEHICLE_REF_COLUMNS),
+    ("Кланы", "clan_id", CLAN_REF_COLUMNS),
+)
+REF_CSV_NAMES = {"Игроки": "player_refs", "Танки": "vehicle_refs", "Кланы": "clan_refs"}
+
+# Columns --bi adds to every player row from the reference book (empty without one).
+BI_ENRICH_COLUMNS = (
+    "vehicle_class", "vehicle_tier", "vehicle_nation", "vehicle_role", "vehicle_premium",
+    "clan_tag", "clan_strength", "clan_ur_winrate",
+    "player_strength", "player_winrate", "enemy_avg_winrate", "enemy_strength",
+    # the day as a date (ГГГГ-ММ-ДД) for a Foresight calendar dictionary; "day" itself is text
+    "battle_date",
+)
+
+# Strength groups. The numbers in front keep them in order in a dictionary sorted by name.
+NO_CLAN = "Без клана"
+CLAN_MIN_UR_BATTLES = 50
+PLAYER_MIN_BATTLES = 1000   # below this the win rate says little: twinks, newcomers
+ENEMY_MIN_KNOWN = 5         # enemies with a meaningful win rate needed to judge a team
+
+
+def clan_strength(winrate, battles):
+    if battles is None:
+        return "0. Нет данных УР"
+    if battles < CLAN_MIN_UR_BATTLES or winrate is None:
+        return f"0. Мало боёв в УР (до {CLAN_MIN_UR_BATTLES})"
+    for limit, label in ((45, "1. Слабый (до 45%)"), (55, "2. Средний (45–55%)"), (65, "3. Сильный (55–65%)")):
+        if winrate < limit:
+            return label
+    return "4. Топ (65%+)"
+
+
+def player_strength(winrate, battles):
+    if battles is None:
+        return None
+    if battles < PLAYER_MIN_BATTLES or winrate is None:
+        return f"0. Мало боёв (до {PLAYER_MIN_BATTLES})"
+    for limit, label in ((47, "1. Слабый (до 47%)"), (50, "2. Средний (47–50%)"),
+                         (53, "3. Хороший (50–53%)"), (56, "4. Сильный (53–56%)")):
+        if winrate < limit:
+            return label
+    return "5. Топ (56%+)"
+
+
+def enemy_strength(avg_winrate):
+    if avg_winrate is None:
+        return None
+    for limit, label in ((48, "1. Слабые (до 48%)"), (50, "2. Средние (48–50%)"), (52, "3. Сильные (50–52%)")):
+        if avg_winrate < limit:
+            return label
+    return "4. Очень сильные (52%+)"
+
+
+def _int_or_none(value):
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def refs_from_export(battles: list[dict]) -> tuple[dict, dict, dict]:
+    """What the replays themselves say about players, vehicles and clans, the latest battle winning."""
+    players, vehicles, clans, clan_members = {}, {}, {}, {}
+    for battle in battles:  # oldest first, so later battles overwrite: the current nickname
+        for p in battle.get("players", []):
+            d = p.get("details") or {}
+            account_id = _int_or_none(d.get("accountDBID"))
+            if account_id:
+                seen = (players.get(account_id) or {}).get("battles_seen", 0)
+                players[account_id] = {"account_id": account_id, "nickname": p.get("name"),
+                                       "clan": d.get("clanAbbrev") or None, "battles_seen": seen + 1}
+            tank_id = _int_or_none(d.get("typeCompDescr"))
+            if tank_id:
+                nation, _, tag = (d.get("vehicleType") or "").partition(":")
+                vehicles[tank_id] = {"tank_id": tank_id, "vehicle": p.get("vehicle"), "tag": tag or None,
+                                     "nation": NATIONS.get(nation, nation or None)}
+            clan_id = _int_or_none(d.get("clanDBID"))
+            if clan_id:
+                clan_members.setdefault(clan_id, set()).add(account_id)
+                clans[clan_id] = {"clan_id": clan_id, "tag": d.get("clanAbbrev") or None,
+                                  "players_seen": len(clan_members[clan_id])}
+    return players, vehicles, clans
+
+
+def _lesta_get(method: str, params: dict) -> dict:
+    url = f"{LESTA_API}/{method}/?" + urlencode(params)
+    for attempt in range(3):
         try:
-            with urllib.request.urlopen(req, context=self.context, timeout=30) as resp:
-                return json.loads(resp.read())["ocs"]["data"]["id"] or login
-        except (urllib.error.URLError, ValueError, KeyError, TypeError, OSError):
-            return login  # the folder request that follows reports what is actually wrong
-
-    def _request(self, url: str, method: str = "GET", body: bytes = None, headers: dict = None) -> bytes:
-        req = urllib.request.Request(url, data=body, method=method,
-                                     headers={**self.headers, **(headers or {})})
-        try:
-            with urllib.request.urlopen(req, context=self.context, timeout=120) as resp:
-                return resp.read()
-        except urllib.error.HTTPError as e:
-            hint = {401: "неверный логин или пароль приложения",
-                    404: "нет такой папки или файла"}.get(e.code, e.reason)
-            sys.exit(f"Nextcloud ответил {e.code} на {unquote(url)}: {hint}")
-        except urllib.error.URLError as e:
-            sys.exit(f"Не удалось подключиться к Nextcloud ({unquote(url)}): {e.reason}")
-
-    def list_json(self, folder: str) -> list[tuple[str, object]]:
-        """(name, modified) of every .json directly in `folder`, newest first."""
-        body = (b'<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop>'
-                b"<d:getlastmodified/><d:resourcetype/></d:prop></d:propfind>")
-        url = self.base + quote(folder.strip("/")) + "/"
-        tree = ET.fromstring(self._request(url, "PROPFIND", body,
-                                           {"Depth": "1", "Content-Type": "application/xml"}))
-        ns = {"d": "DAV:"}
-        files = []
-        for resp in tree.findall("d:response", ns):
-            name = unquote(resp.findtext("d:href", "", ns).rstrip("/").rsplit("/", 1)[-1])
-            if resp.find(".//d:resourcetype/d:collection", ns) is not None:
-                continue
-            if not name.lower().endswith(".json"):
-                continue
-            modified = resp.findtext(".//d:getlastmodified", "", ns)
-            files.append((name, parsedate_to_datetime(modified) if modified else None))
-        files.sort(key=lambda f: (f[1] is not None, f[1] or 0), reverse=True)
-        return files
-
-    def download(self, folder: str, name: str) -> bytes:
-        return self._request(self.base + quote(folder.strip("/")) + "/" + quote(name))
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                body = json.loads(resp.read())
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            if attempt == 2:
+                sys.exit(f"API Лесты недоступен ({method}): {e}")
+            time.sleep(2)
+            continue
+        if body.get("status") == "ok":
+            return body
+        error = body.get("error") or {}
+        if error.get("message") == "REQUEST_LIMIT_EXCEEDED" and attempt < 2:
+            time.sleep(2)
+            continue
+        sys.exit(f"API Лесты вернул ошибку на {method}: {error.get('message')} {error.get('field') or ''}".strip())
+    return {}
 
 
-def load_from_nextcloud(remote_name: str | None, verify_tls: bool) -> tuple[bytes, str]:
-    url = os.environ.get("NEXTCLOUD_URL")
-    user = os.environ.get("NEXTCLOUD_USER")
-    if not url or not user:
-        sys.exit("Укажи NEXTCLOUD_URL и NEXTCLOUD_USER (или передай путь к локальному JSON)")
-    password = os.environ.get("NEXTCLOUD_PASSWORD") or getpass.getpass(f"Пароль Nextcloud для {user}: ")
-    folder = os.environ.get("NEXTCLOUD_FOLDER", "battlestats")
+def fetch_vehicles(app_id: str) -> dict:
+    """The whole tankopedia (about a thousand vehicles in ten pages), keyed by tank_id."""
+    fields = "tank_id,name,tag,type,tier,nation,is_premium,is_wheeled,default_profile.hp"
+    found, page = {}, 1
+    while True:
+        body = _lesta_get("encyclopedia/vehicles", {"application_id": app_id, "fields": fields,
+                                                    "limit": 100, "page_no": page})
+        found.update({int(k): v for k, v in (body.get("data") or {}).items() if v})
+        if page >= (body.get("meta") or {}).get("page_total", 1):
+            return found
+        page += 1
+        time.sleep(0.15)
 
-    cloud = Nextcloud(url, user, password, verify_tls)
-    if remote_name is None:
-        files = cloud.list_json(folder)
-        if not files:
-            sys.exit(f"В папке {folder} на Nextcloud нет .json файлов")
-        remote_name = files[0][0]
-        print(f"Беру самый свежий файл: {folder}/{remote_name}")
-    return cloud.download(folder, remote_name), remote_name
+
+def fetch_accounts(app_id: str, account_ids: list[int]) -> dict:
+    fields = "account_id,created_at,last_battle_time,global_rating,statistics.all.battles,statistics.all.wins"
+    found = {}
+    for start in range(0, len(account_ids), 100):
+        chunk = account_ids[start:start + 100]
+        body = _lesta_get("account/info", {"application_id": app_id, "fields": fields,
+                                           "account_id": ",".join(map(str, chunk))})
+        found.update({int(k): v for k, v in (body.get("data") or {}).items() if v})
+        time.sleep(0.15)
+        if start and start % 2000 == 0:
+            print(f"  аккаунты: {start} из {len(account_ids)}")
+    return found
+
+
+def fetch_clans(app_id: str, clan_ids: list[int]) -> dict:
+    """Clan card (clans/info, 100 per request) and Stronghold results (stronghold/claninfo, 10 per request)."""
+    found = {}
+    for start in range(0, len(clan_ids), 100):
+        chunk = clan_ids[start:start + 100]
+        body = _lesta_get("clans/info", {"application_id": app_id, "fields": "clan_id,tag,name,members_count,created_at",
+                                         "clan_id": ",".join(map(str, chunk))})
+        for k, v in (body.get("data") or {}).items():
+            if v:
+                found.setdefault(int(k), {})["info"] = v
+        time.sleep(0.15)
+    fields = ",".join([
+        "clan_id", "stronghold_level",
+        "skirmish_statistics.win_10", "skirmish_statistics.total_10",
+        "skirmish_statistics.win_10_in_28d", "skirmish_statistics.total_10_in_28d",
+        "battles_for_strongholds_statistics.win_10", "battles_for_strongholds_statistics.total_10",
+        "battles_for_strongholds_statistics.win_10_in_28d", "battles_for_strongholds_statistics.total_10_in_28d",
+    ])
+    for start in range(0, len(clan_ids), 10):
+        chunk = clan_ids[start:start + 10]
+        body = _lesta_get("stronghold/claninfo", {"application_id": app_id, "fields": fields,
+                                                  "clan_id": ",".join(map(str, chunk))})
+        for k, v in (body.get("data") or {}).items():
+            if v:
+                found.setdefault(int(k), {})["stronghold"] = v
+        time.sleep(0.15)
+        if start and start % 500 == 0:
+            print(f"  Укрепрайоны: {start} из {len(clan_ids)}")
+    return found
+
+
+def _percent_or_none(wins, total):
+    return round(wins / total * 100, 2) if total and wins is not None else None
+
+
+def api_clan_fields(info: dict) -> dict:
+    card, sh = info.get("info") or {}, info.get("stronghold")
+    row = {"name": card.get("name"), "members": card.get("members_count"), "created_at": _day(card.get("created_at")),
+           "tag": card.get("tag")}
+    if sh is None:  # no Stronghold at all
+        row.update({"stronghold_level": None, "ur_battles": None, "ur_winrate": None,
+                    "ur_battles_28d": None, "ur_winrate_28d": None})
+    else:
+        sk = sh.get("skirmish_statistics") or {}
+        bf = sh.get("battles_for_strongholds_statistics") or {}
+        total = (sk.get("total_10") or 0) + (bf.get("total_10") or 0)
+        wins = (sk.get("win_10") or 0) + (bf.get("win_10") or 0)
+        total_28 = (sk.get("total_10_in_28d") or 0) + (bf.get("total_10_in_28d") or 0)
+        wins_28 = (sk.get("win_10_in_28d") or 0) + (bf.get("win_10_in_28d") or 0)
+        row.update({"stronghold_level": sh.get("stronghold_level"), "ur_battles": total,
+                    "ur_winrate": _percent_or_none(wins, total),
+                    "ur_battles_28d": total_28, "ur_winrate_28d": _percent_or_none(wins_28, total_28)})
+    row["strength"] = clan_strength(row["ur_winrate"], row["ur_battles"])
+    return row
+
+
+def _day(timestamp):
+    if not timestamp:
+        return None
+    return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d")
+
+
+def api_player_fields(info: dict, now: datetime) -> dict:
+    stats = (info.get("statistics") or {}).get("all") or {}
+    battles, wins = stats.get("battles"), stats.get("wins")
+    created = info.get("created_at")
+    return {
+        "created_at": _day(created),
+        "account_age_days": (now - datetime.fromtimestamp(created, timezone.utc)).days if created else None,
+        "global_rating": info.get("global_rating"),
+        "battles_total": battles,
+        "winrate_total": round(wins / battles * 100, 2) if battles and wins is not None else None,
+        "last_battle": _day(info.get("last_battle_time")),
+    }
+
+
+def api_vehicle_fields(info: dict) -> dict:
+    return {
+        "api_name": info.get("name"),
+        "vehicle_class": VEHICLE_CLASSES.get(info.get("type"), info.get("type")),
+        "tier": info.get("tier"),
+        "is_premium": int(bool(info.get("is_premium"))),
+        "is_wheeled": int(bool(info.get("is_wheeled"))),
+        "hp": (info.get("default_profile") or {}).get("hp"),
+    }
+
+
+def read_refs(path: Path) -> dict:
+    """{sheet: {key: row}} from an existing reference book; columns found by header or key."""
+    from openpyxl import load_workbook
+    book, wb = {}, load_workbook(path, read_only=True, data_only=True)
+    for sheet, key, columns in REF_SHEETS:
+        rows = {}
+        if sheet in wb.sheetnames:
+            values = list(wb[sheet].iter_rows(values_only=True))
+            by_header = {h: k for k, h, _ in columns} | {k: k for k, _, _ in columns}
+            header = [by_header.get(str(h).strip()) if h is not None else None for h in (values[0] if values else ())]
+            for line in values[1:]:
+                row = {k: v for k, v in zip(header, line) if k and v not in (None, "")}
+                if _int_or_none(row.get(key)):
+                    row[key] = int(row[key])
+                    rows[row[key]] = row
+        book[sheet] = rows
+    wb.close()
+    return book
+
+
+def merge_refs(existing: dict, replay: dict, api: dict, columns) -> list[dict]:
+    """Replay columns from the latest export, API ones fresh when fetched, manual ones always kept.
+    Rows only in the old book stay: hand-filled data is never dropped."""
+    merged = []
+    for key in sorted(set(existing) | set(replay)):
+        old, row = existing.get(key, {}), {}
+        for column, _, source in columns:
+            if source == "replay":  # the API may fill a gap the replay left (a clan's tag)
+                value = (replay.get(key) or {}).get(column)
+                if value is None:
+                    value = (api.get(key) or {}).get(column)
+                row[column] = value if value is not None else old.get(column)
+            elif source == "api":
+                row[column] = api[key].get(column) if key in api else old.get(column)
+            elif source == "manual_auto":  # filled automatically, but a hand-written value is kept
+                value = old.get(column)
+                row[column] = value if value not in (None, "") else (api.get(key) or {}).get(column)
+            else:
+                row[column] = old.get(column)
+        merged.append(row)
+    return merged
+
+
+def write_refs(path: Path, sheets: dict) -> None:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    manual_fill = PatternFill("solid", fgColor="FFF2CC")
+    wb = Workbook()
+    wb.remove(wb.active)
+    for sheet, key, columns in REF_SHEETS:
+        ws = wb.create_sheet(sheet)
+        ws.append([header for _, header, _ in columns])
+        for row in sheets[sheet]:
+            ws.append([_cell(row.get(k)) for k, _, _ in columns])
+        for i, (_, header, source) in enumerate(columns, start=1):
+            cell = ws.cell(row=1, column=i)
+            cell.font = Font(bold=True)
+            if source in ("manual", "manual_auto"):
+                cell.fill = manual_fill
+            ws.column_dimensions[get_column_letter(i)].width = min(max(len(header) + 2, 12), 30)
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}{max(len(sheets[sheet]), 1) + 1}"
+    wb.save(path)
+
+
+def load_game_vehicles(path: Path) -> dict:
+    """{tank_id: class, tier, premium, wheeled, role} from game_vehicles.json (scripts/game_vehicles.py)."""
+    try:
+        body = json.loads(Path(path).read_text(encoding="utf-8"))
+        vehicles = {int(v["tank_id"]): v for v in body["vehicles"]}
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        sys.exit(f"Не удалось прочитать список техники {path}: {e}")
+    print(f"Техника из клиента {body.get('client_version') or '?'}: {len(vehicles)} машин ({path})")
+    return vehicles
+
+
+def update_refs(export: dict, path: Path, app_id: str | None, game_vehicles: dict | None = None) -> dict:
+    players, vehicles, clans = refs_from_export(export["battles"])
+    existing = read_refs(path) if path.exists() else {sheet: {} for sheet, _, _ in REF_SHEETS}
+    api_players, api_vehicles, api_clans = {}, {}, {}
+    if game_vehicles:
+        by_tag = {v.get("tag"): v for v in game_vehicles.values()}
+        for tank_id, v in vehicles.items():
+            info = game_vehicles.get(tank_id) or by_tag.get(v.get("tag"))
+            if info:
+                api_vehicles[tank_id] = {k: info.get(k) for k in ("vehicle_class", "tier", "is_premium", "is_wheeled", "role")}
+        print(f"  из них в наших реплеях {len(api_vehicles)} из {len(vehicles)}")
+    if app_id:
+        print(f"Танкопедия Лесты...")
+        catalog = fetch_vehicles(app_id)
+        by_tag = {v.get("tag"): v for v in catalog.values() if v.get("tag")}
+        for tank_id, v in vehicles.items():
+            info = catalog.get(tank_id) or by_tag.get(v.get("tag"))
+            if info:
+                api_vehicles[tank_id] = {**api_vehicles.get(tank_id, {}), **api_vehicle_fields(info)}
+        print(f"Аккаунты игроков ({len(players)})...")
+        now = datetime.now(timezone.utc)
+        api_players = {k: api_player_fields(v, now) for k, v in fetch_accounts(app_id, sorted(players)).items()}
+        print(f"Кланы и их Укрепрайоны ({len(clans)})...")
+        api_clans = {k: api_clan_fields(v) for k, v in fetch_clans(app_id, sorted(clans)).items()}
+    else:
+        print("LESTA_APP_ID не задан: рейтинг, % побед, Укрепрайон и прочее из API не обновляются"
+              + ("" if game_vehicles else "; класс, уровень и роль танков - из game_vehicles.json (--vehicles)"))
+    sheets = {
+        "Игроки": merge_refs(existing.get("Игроки", {}), players, api_players, PLAYER_REF_COLUMNS),
+        "Танки": merge_refs(existing.get("Танки", {}), vehicles, api_vehicles, VEHICLE_REF_COLUMNS),
+        "Кланы": merge_refs(existing.get("Кланы", {}), clans, api_clans, CLAN_REF_COLUMNS),
+    }
+    write_refs(path, sheets)
+    print(f"{path}: игроков {len(sheets['Игроки'])} (из API {len(api_players)}), "
+          f"танков {len(sheets['Танки'])} (из API {len(api_vehicles)}), "
+          f"кланов {len(sheets['Кланы'])} (из API {len(api_clans)})")
+    return sheets
+
+
+# A cube drops a row whose dimension key matches no element, so an empty class or role would
+# take the row out of every total. Unknown values get an explicit "not set" element instead.
+NOT_SET = "Не указано"
+
+
+def _float_or_none(value):
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _meaningful_winrate(p: dict):
+    """A player's win rate, only when there are enough battles behind it to mean something."""
+    battles, winrate = _int_or_none(p.get("battles_total")), _float_or_none(p.get("winrate_total"))
+    return winrate if battles is not None and battles >= PLAYER_MIN_BATTLES else None
+
+
+def enrich_players(rows: list[dict], refs: dict | None) -> list[dict]:
+    """Adds BI_ENRICH_COLUMNS to flat player rows by typeCompDescr, accountDBID and clanDBID.
+
+    enemy_avg_winrate is the mean win rate of the other team in the same battle, counting only
+    players with PLAYER_MIN_BATTLES or more; with fewer than ENEMY_MIN_KNOWN such players it stays empty."""
+    vehicles = (refs or {}).get("Танки", {})
+    players = (refs or {}).get("Игроки", {})
+    clans = (refs or {}).get("Кланы", {})
+
+    team_rates = {}  # battle_id -> {team: win rates of its players that count}
+    for row in rows:
+        rate = _meaningful_winrate(players.get(_int_or_none(row.get("accountDBID"))) or {})
+        if rate is not None:
+            team_rates.setdefault(row.get("battle_id"), {}).setdefault(row.get("team"), []).append(rate)
+
+    for row in rows:
+        v = vehicles.get(_int_or_none(row.get("typeCompDescr"))) or {}
+        p = players.get(_int_or_none(row.get("accountDBID"))) or {}
+        clan_id = _int_or_none(row.get("clanDBID"))
+        c = clans.get(clan_id) or {}
+        enemies = [r for team, rates in team_rates.get(row.get("battle_id"), {}).items()
+                   if team != row.get("team") for r in rates]
+        enemy_avg = round(sum(enemies) / len(enemies), 2) if len(enemies) >= ENEMY_MIN_KNOWN else None
+        row.update({
+            "vehicle_class": v.get("vehicle_class") or NOT_SET,
+            "vehicle_tier": _int_or_none(v.get("tier")) or 0,
+            "vehicle_nation": v.get("nation") or NOT_SET,
+            "vehicle_role": v.get("role") or NOT_SET,
+            "vehicle_premium": _int_or_none(v.get("is_premium")),
+            # some replays carry a clan id but no tag; the id keeps the row in the cube until the API names it
+            "clan_tag": (row.get("clanAbbrev") or c.get("tag") or f"#{clan_id}") if clan_id else NO_CLAN,
+            "clan_strength": (c.get("strength") or NOT_SET) if clan_id else NO_CLAN,
+            "clan_ur_winrate": _float_or_none(c.get("ur_winrate")),
+            "player_strength": player_strength(_float_or_none(p.get("winrate_total")),
+                                               _int_or_none(p.get("battles_total"))) or NOT_SET,
+            "player_winrate": _float_or_none(p.get("winrate_total")),
+            "enemy_avg_winrate": enemy_avg,
+            "enemy_strength": enemy_strength(enemy_avg) or NOT_SET,
+            "battle_date": row.get("day"),
+        })
+    return rows
 
 
 def main():
     parser = argparse.ArgumentParser(description="BattleStats JSON -> таблица (.xlsx или .csv)")
     parser.add_argument("json_file", type=Path, nargs="?",
-                        help="локальный файл; без него JSON берётся из Nextcloud")
-    parser.add_argument("-r", "--remote", metavar="NAME",
-                        help="имя файла в папке Nextcloud (по умолчанию самый свежий .json)")
+                        help="локальный файл; без него выгрузка скачивается с сайта")
+    parser.add_argument("--save", type=Path, default=Path("battlestats.json"),
+                        help="куда сохранить скачанную выгрузку (по умолчанию battlestats.json). Имя постоянное, "
+                             "чтобы справочник <имя>_refs.xlsx с ручными колонками был один и тот же")
+    parser.add_argument("--all", action="store_true",
+                        help="при скачивании: все бои в базе, а не только свои")
+    parser.add_argument("--date-from", metavar="ГГГГ-ММ-ДД", help="при скачивании: бои с этого дня")
+    parser.add_argument("--date-to", metavar="ГГГГ-ММ-ДД", help="при скачивании: бои по этот день")
     parser.add_argument("-o", "--output", type=Path,
                         help="куда сохранить: .xlsx (по умолчанию) или .csv")
     parser.add_argument("--bi", action="store_true",
                         help="плоские CSV для Форсайта/BI: <имя>_bi_battles.csv и <имя>_bi_players.csv")
-    parser.add_argument("--no-verify-tls", action="store_true",
-                        help="не проверять сертификат Nextcloud (корпоративный самоподписанный)")
+    parser.add_argument("--refs", action="store_true",
+                        help="создать/обновить справочник игроков и танков <имя>_refs.xlsx (API Лесты: LESTA_APP_ID)")
+    parser.add_argument("--vehicles", type=Path,
+                        help="список техники из scripts/game_vehicles.py (класс, уровень, роль без API); "
+                             "по умолчанию game_vehicles.json рядом с выгрузкой, если он есть")
+    parser.add_argument("--refs-file", type=Path,
+                        help="путь к справочнику вместо <имя>_refs.xlsx рядом с JSON")
     args = parser.parse_args()
 
     if args.json_file:
@@ -380,8 +829,10 @@ def main():
         except OSError as e:
             sys.exit(f"Не удалось прочитать {source}: {e}")
     else:
-        raw, name = load_from_nextcloud(args.remote, not args.no_verify_tls)
-        source, default_out = name, Path(name).with_suffix(".xlsx")
+        raw, name = load_from_site(not args.all, args.date_from, args.date_to)
+        args.save.write_bytes(raw)
+        print(f"{args.save}: выгрузка с сайта ({name}, {len(raw) / 1e6:.1f} МБ)")
+        source, default_out = str(args.save), args.save.with_suffix(".xlsx")
 
     try:
         export = json.loads(raw.decode("utf-8-sig"))
@@ -391,13 +842,43 @@ def main():
         sys.exit(f"{source} не похож на выгрузку BattleStats: нет поля battles")
 
     out = args.output or default_out
+    refs_path = args.refs_file or default_out.with_name(f"{default_out.stem}_refs.xlsx")
+    if args.refs or args.bi:
+        try:
+            import openpyxl  # noqa: F401  the reference book is an Excel file
+        except ImportError as e:
+            if args.refs or refs_path.exists():
+                sys.exit(f"Для справочника нужен openpyxl ({e}): \"{sys.executable}\" -m pip install openpyxl")
+
+    refs = None
+    if args.refs:
+        vehicles_path = args.vehicles or default_out.with_name("game_vehicles.json")
+        game_vehicles = load_game_vehicles(vehicles_path) if args.vehicles or vehicles_path.exists() else None
+        refs_sheets = update_refs(export, refs_path, os.environ.get("LESTA_APP_ID"), game_vehicles)
+        refs = {sheet: {row[key]: row for row in refs_sheets[sheet]} for sheet, key, _ in REF_SHEETS}
+    elif args.bi and refs_path.exists():
+        refs = read_refs(refs_path)
+        print(f"Атрибуты игроков и танков из {refs_path}")
+
     if args.bi:
         battles = export["battles"]
-        for kind, columns in (("battles", BI_BATTLE_COLUMNS), ("players", BI_PLAYER_COLUMNS)):
-            path = out.with_name(f"{out.stem}_bi_{kind}.csv")
-            rows = flatten_bi(battles, kind)
-            write_bi_csv(path, columns, rows)
-            print(f"{path}: {len(rows)} строк")
+        path = out.with_name(f"{out.stem}_bi_battles.csv")
+        rows = flatten_bi(battles, "battles")
+        write_bi_csv(path, BI_BATTLE_COLUMNS, rows)
+        print(f"{path}: {len(rows)} строк")
+        path = out.with_name(f"{out.stem}_bi_players.csv")
+        rows = enrich_players(flatten_bi(battles, "players"), refs)
+        write_bi_csv(path, BI_PLAYER_COLUMNS + BI_ENRICH_COLUMNS, rows)
+        print(f"{path}: {len(rows)} строк")
+        if refs is not None:
+            for sheet, key, columns in REF_SHEETS:
+                path = out.with_name(f"{out.stem}_bi_{REF_CSV_NAMES[sheet]}.csv")
+                rows = [{k: _bi_value(r.get(k)) for k, _, _ in columns} for r in refs[sheet].values()]
+                write_bi_csv(path, [k for k, _, _ in columns], rows)
+                print(f"{path}: {len(rows)} строк")
+        else:
+            print(f"Справочника {refs_path.name} нет - атрибуты игроков и танков пустые (создать: --refs)")
+    if args.bi or args.refs:
         return
 
     battle_header, battle_rows, player_header, player_rows = build_tables(export)

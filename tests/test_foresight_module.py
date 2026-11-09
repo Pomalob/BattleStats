@@ -33,16 +33,49 @@ def _fore_columns(name: str) -> list[tuple[str, str]]:
     return [tuple(c.split(":")) for c in _fore_function(name).split(";")]
 
 
-@pytest.mark.parametrize("function, columns", [
-    ("BattleColumns", FLAT_BATTLE_COLUMNS),
-    ("PlayerColumns", FLAT_PLAYER_COLUMNS),
-])
-def test_fore_tables_have_exactly_the_site_columns(function, columns):
+def _expected_columns(function):
+    script = _script()
+    return {
+        "BattleColumns": list(FLAT_BATTLE_COLUMNS),
+        # the site has no reference book; --bi adds its attributes after the site's columns
+        "PlayerColumns": list(FLAT_PLAYER_COLUMNS) + list(script.BI_ENRICH_COLUMNS),
+        "PlayerRefColumns": [k for k, _, _ in script.PLAYER_REF_COLUMNS],
+        "VehicleRefColumns": [k for k, _, _ in script.VEHICLE_REF_COLUMNS],
+        "ClanRefColumns": [k for k, _, _ in script.CLAN_REF_COLUMNS],
+    }[function]
+
+
+@pytest.mark.parametrize("function", ["BattleColumns", "PlayerColumns", "PlayerRefColumns", "VehicleRefColumns",
+                                      "ClanRefColumns"])
+def test_fore_tables_have_exactly_the_csv_columns(function):
+    columns = _expected_columns(function)
     fore = _fore_columns(function)
     assert [name for name, _ in fore] == list(columns)
-    assert all(re.fullmatch(r"I|F|S\d+", kind) for _, kind in fore)
+    assert all(re.fullmatch(r"I|F|D|S\d+", kind) for _, kind in fore)
     # Foresight and the databases under it cap identifiers at 30 characters
     assert all(len(name) <= 30 for name, _ in fore)
+
+
+def test_the_player_dimension_is_the_mdm_dictionary_with_live_attributes():
+    """Name and age live in a Foresight MDM dictionary edited through a registry form. The cube uses
+    that dictionary as its player dimension, so edits show up without reloading anything."""
+    for name in ('"ACCOUNT_ID"', '"BATTLES_SEEN"', "NSI_ACCOUNT_INDEX", 'TABLE_PLAYERS + ".ACCOUNTDBID"'):
+        assert name in FORE
+    assert "Rds." in FORE.split("// --- Настройки ---")[0]  # the Rds assembly is among the links
+    assert '(STEPS = "nsi")' in FORE
+    # nothing copies name/age into tables any more, and the old player/age dimensions are gone
+    assert "real_name" not in _fore_function("PlayerRefColumns")
+    assert "player_age" not in _fore_function("PlayerColumns")
+    dims = _fore_function("DimColumns")
+    assert "BS_DIM_PLAYER|" not in dims and "BS_DIM_AGE|" not in dims
+
+
+def test_the_cube_has_a_calendar_bound_to_a_date_field():
+    player_fields = dict(_fore_columns("PlayerColumns"))
+    assert player_fields["battle_date"] == "D"
+    assert "KE_CLASS_CLNDIM" in FORE and 'TABLE_PLAYERS + ".BATTLE_DATE"' in FORE
+    # the old text "day" dimension is gone: the calendar replaced it
+    assert "BS_DIM_DAY|" not in _fore_function("DimColumns")
 
 
 def test_cube_facts_and_dimensions_point_at_real_player_fields():
@@ -54,8 +87,8 @@ def test_cube_facts_and_dimensions_point_at_real_player_fields():
                        for k in re.findall(r"@\[(\d+)\]", target)), name
         else:
             assert aggregation in ("SUM", "COUNT") and target in player_fields, name
-    for table, dictionary, name, field, key_type in (d.split("|") for d in _fore_function("DimColumns").split(";")):
-        assert field in player_fields and key_type in ("S", "I"), name
+    for table, dictionary, name, field, key_type, root in (d.split("|") for d in _fore_function("DimColumns").split(";")):
+        assert field in player_fields and key_type in ("S", "I") and root, name
 
 
 def test_script_bi_columns_match_the_site():
@@ -96,7 +129,7 @@ def test_script_bi_writes_csv_foresight_can_read(client, auth, fake_db, tmp_path
     players = (tmp_path / "battlestats_bi_players.csv").read_bytes()
     assert not players.startswith(b"\xef\xbb\xbf")  # a BOM would stick to the first column name
     rows = list(csv.reader(players.decode("utf-8").splitlines(), delimiter=";"))
-    assert rows[0] == list(FLAT_PLAYER_COLUMNS)
+    assert rows[0] == list(FLAT_PLAYER_COLUMNS) + list(script.BI_ENRICH_COLUMNS)
     assert len(rows) - 1 == len(flatten_export(export["battles"], "players"))
     battles = list(csv.reader((tmp_path / "battlestats_bi_battles.csv").read_text(encoding="utf-8").splitlines(),
                               delimiter=";"))

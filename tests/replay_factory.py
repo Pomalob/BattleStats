@@ -83,6 +83,7 @@ def build_replay(
             "piercings": p.get("piercings", 0),
             "deathReason": p.get("death_reason", -1),
             "accountDBID": 1000 + i,
+            "typeCompDescr": p.get("tank_id", 7937),
             "sniperDamageDealt": p.get("sniper_damage", 0),
             "killerID": p.get("killer_id", 0),
             "credits": 15000,      # economy: must not reach the export
