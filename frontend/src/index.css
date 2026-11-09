@@ -1,0 +1,68 @@
+@import "tailwindcss";
+@import "./fonts.css";
+
+/* Design tokens: warm graphite with one orange accent ("Tactical Intelligence" layout,
+   Combat Arena colour). Every colour is a variable, so a light theme only redefines them. */
+@theme {
+  --color-bg: #0e1013;
+  --color-surface: #16191e;
+  --color-surface-2: #1d2127;
+  --color-surface-3: #252a31;
+  --color-line: #2a3038;
+  --color-line-soft: #1f242b;
+  --color-ink: #eceef1;
+  --color-muted: #9aa2ad;
+  --color-dim: #646c77;
+  --color-accent: #e8913a;
+  --color-accent-hover: #f2a65a;
+  --color-accent-soft: rgb(232 145 58 / 0.14);
+  --color-win: #4fbf84;
+  --color-loss: #e0605a;
+  --color-draw: #c9a85e;
+
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --animate-rise: rise 220ms ease-out both;
+  --animate-fade: fade 180ms ease-out both;
+  --animate-draw: draw 450ms ease-out both;
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes draw {
+    from { stroke-dashoffset: var(--len, 2000); }
+    to { stroke-dashoffset: 0; }
+  }
+}
+
+@layer base {
+  html { color-scheme: dark; }
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Numbers line up in columns everywhere. */
+  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  :focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}

@@ -22,11 +22,17 @@ def build_replay(
     drop_personal: bool = False,
     map_display_name: str | None = None,
     real_names: dict[str, str] | None = None,
+    bonus_type: int | None = None,
+    avatar: dict | None = None,
 ) -> bytes:
     """Assemble a replay from a compact player spec.
 
     Each player dict accepts: name, team, vehicle_type, damage, received, blocked,
-    assist_radio, assist_track, assist_stun, kills, xp, shots, hits, piercings, death_reason.
+    assist_radio, assist_track, assist_stun, kills, xp, shots, hits, piercings, death_reason,
+    platoon (prebattleID, needs real_names) and extra (more raw result fields).
+
+    bonus_type is the battle mode number (1 random, 20 clan 7x7, 43 Onslaught); avatar is
+    the recorder's personal block (comp7Rating and the like).
 
     anonymise_meta replaces the names in the metadata block the way the in-game
     nickname anonymiser does; drop_personal removes the recording player's own
@@ -60,6 +66,8 @@ def build_replay(
         "serverSettings": {"comp7_config": {"huge": "block"}},
         "vehicles": meta_vehicles,
     }
+    if bonus_type is not None:
+        meta["battleType"] = bonus_type
     if map_display_name is not None:
         meta["mapDisplayName"] = map_display_name
 
@@ -88,6 +96,7 @@ def build_replay(
             "killerID": p.get("killer_id", 0),
             "credits": 15000,      # economy: must not reach the export
             "winPoints": 0,        # game-mode counter: must not reach the export
+            **p.get("extra", {}),
         }]
         for i, p in enumerate(players)
     }
@@ -101,6 +110,8 @@ def build_replay(
     }
 
     common = {"winnerTeam": winner_team, "duration": 293, "finishReason": 1, "teamHealth": {"1": 30000, "2": 31000}}
+    if bonus_type is not None:
+        common["bonusType"] = bonus_type
     results_block = {"common": common, "vehicles": res_vehicles}
     if real_names:
         results_block["players"] = {
@@ -112,6 +123,6 @@ def build_replay(
     if not drop_personal:
         own = next((p for p in players if p["name"] == player_name), None)
         if own is not None:
-            results_block["personal"] = {"avatar": {}, "12345": {"team": own.get("team", 1)}}
+            results_block["personal"] = {"avatar": dict(avatar or {}), "12345": {"team": own.get("team", 1)}}
 
     return data + _block([results_block, players_info, {}])

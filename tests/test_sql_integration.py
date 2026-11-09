@@ -37,7 +37,8 @@ def clean(db):
     with db.get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "TRUNCATE user_battles, hidden_players, player_stats, battles, users "
+                "TRUNCATE team_invites, team_members, teams, user_battles, hidden_players, "
+                "player_stats, battles, users "
                 "RESTART IDENTITY CASCADE"
             )
     yield
@@ -176,7 +177,7 @@ def test_battles_list_marks_ownership_and_counts_players(db, seeded):
 
 
 def test_battles_list_can_be_narrowed_to_one_user(db, seeded):
-    rows = db.get_battles_list(user_id=seeded["bob"], viewer_id=seeded["bob"])
+    rows = db.get_battles_list(seeded["bob"], viewer_id=seeded["bob"])
     assert len(rows) == 1 and rows[0]["map_name"] == "Малиновка"
 
 
@@ -325,3 +326,222 @@ def test_uploading_an_old_battle_again_fills_in_its_details(db):
     assert row["details"] == {"arenaUniqueID": 9}
     assert row["recorder"] == {"playerName": "alice"}
     assert {p["details"]["realName"] for p in row["players"]} == {"P1", "E1"}
+
+
+# --- scopes, teams, modes ---
+
+from database import Scope  # noqa: E402
+
+
+def _with_mode(battle, mode, recorder=None, platoons=None):
+    battle["mode"] = mode
+    if recorder:
+        battle["recorder"] = {"playerName": recorder}
+    for p in battle["players"]:
+        p["details"] = {"prebattleID": (platoons or {}).get(p["name"], 0)}
+    return battle
+
+
+def test_scopes_follow_uploads_and_team_membership(db, seeded):
+    alice, bob = seeded["alice"], seeded["bob"]
+    carol = db.create_user("carol", "hash")["id"]
+    assert db.get_db_totals(Scope("visible", user_id=alice))["total_battles"] == 2
+    team = db.create_team("Взвод", alice)["id"]
+    status, _ = db.accept_invite(db.create_invite(team, alice, "code-1", 7, None)["code"], bob)
+    assert status == "joined"
+
+    assert db.get_db_totals(Scope("visible", user_id=alice))["total_battles"] == 3
+    assert db.get_db_totals(Scope("visible", user_id=bob))["total_battles"] == 3
+    assert db.get_db_totals(Scope("team", team_id=team))["total_battles"] == 3
+    assert db.get_db_totals(Scope("mine", user_id=bob))["total_battles"] == 1
+    assert db.get_db_totals(Scope("visible", user_id=carol))["total_battles"] == 0
+    assert db.get_db_totals(Scope("all"))["total_battles"] == 3
+    # every query takes the same scope
+    assert db.get_player_summary(Scope("visible", user_id=carol)) == []
+    assert len(db.get_battles_list(Scope("team", team_id=team), viewer_id=carol)) == 3
+    assert db.count_players(Scope("visible", user_id=bob)) == 2
+
+
+def test_a_battle_two_teammates_uploaded_is_counted_once(db):
+    alice = db.create_user("alice", "hash")["id"]
+    bob = db.create_user("bob", "hash")["id"]
+    team = db.create_team("Взвод", alice)["id"]
+    db.accept_invite(db.create_invite(team, alice, "c", 7, None)["code"], bob)
+    battle = make_battle("h", "Энск", "win", 1, [{"name": "P1", "damage": 100}])
+    db.save_battle(battle, user_id=alice)
+    db.save_battle(battle, user_id=bob)
+    assert db.get_db_totals(Scope("team", team_id=team))["total_battles"] == 1
+    assert db.get_player_summary(Scope("visible", user_id=alice))[0]["battles"] == 1
+
+
+def test_mode_narrows_every_scope(db):
+    alice = db.create_user("alice", "hash")["id"]
+    db.save_battle(_with_mode(make_battle("c", "Энск", "win", 1, [{"name": "P1"}]), "clan"), user_id=alice)
+    db.save_battle(_with_mode(make_battle("o", "Энск", "win", 1, [{"name": "P1"}]), "onslaught"), user_id=alice)
+    for kind in (Scope("mine", user_id=alice, mode="clan"), Scope("visible", user_id=alice, mode="clan"),
+                 Scope("all", mode="clan")):
+        assert db.get_db_totals(kind)["total_battles"] == 1, kind
+    assert [m["map_name"] for m in db.get_map_summary(Scope("all", mode="onslaught"))] == ["Энск"]
+    assert db.get_battles_list(Scope("all", mode="onslaught"))[0]["mode"] == "onslaught"
+
+
+def test_the_mode_is_derived_from_details_when_not_given(db):
+    alice = db.create_user("alice", "hash")["id"]
+    battle = make_battle("h", "Энск", "win", 1, [{"name": "P1"}])
+    battle["details"] = {"bonusType": 43}
+    db.save_battle(battle, user_id=alice)
+    assert db.get_battles_list(alice)[0]["mode"] == "onslaught"
+
+
+def test_old_battles_get_their_mode_backfilled(db):
+    alice = db.create_user("alice", "hash")["id"]
+    battle = make_battle("h", "Энск", "win", 1, [{"name": "P1"}])
+    battle["details"] = {"bonusType": 20}
+    db.save_battle(battle, user_id=alice)
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE battles SET mode = NULL")
+        db._migrate_battle_modes(conn)
+    assert db.get_battles_list(alice)[0]["mode"] == "clan"
+
+
+def test_a_random_battle_counts_only_the_uploaders_and_their_platoon(db):
+    alice = db.create_user("alice", "hash")["id"]
+    bob = db.create_user("bob", "hash")["id"]
+    players = [{"name": "Me", "damage": 3000}, {"name": "Mate", "damage": 2000},
+               {"name": "Random", "damage": 1000}, {"name": "Enemy", "team": 2, "damage": 500}]
+    db.save_battle(_with_mode(make_battle("r1", "Энск", "win", 1, players), "standard", recorder="Me",
+                              platoons={"Me": 77, "Mate": 77}), user_id=alice)
+    # a solo battle: only the uploader
+    db.save_battle(_with_mode(make_battle("r2", "Энск", "win", 1, players), "standard", recorder="Me"),
+                   user_id=alice)
+    summary = {p["name"]: p["battles"] for p in db.get_player_summary(alice)}
+    assert summary == {"Me": 2, "Mate": 1}
+    assert db.count_players(alice) == 2
+    assert {v["name"] for v in db.get_vehicle_summary(alice)} == {"Me", "Mate"}
+
+    # the random ally uploads the same battle too: now they are "ours" as well
+    db.save_battle(_with_mode(make_battle("r2", "Энск", "win", 1, players), "standard", recorder="Random"),
+                   user_id=bob)
+    assert {p["name"] for p in db.get_player_summary(None)} == {"Me", "Mate", "Random"}
+
+
+def test_clan_battles_keep_the_whole_team(db):
+    alice = db.create_user("alice", "hash")["id"]
+    players = [{"name": "Me"}, {"name": "Mate"}, {"name": "Enemy", "team": 2}]
+    db.save_battle(_with_mode(make_battle("c", "Энск", "win", 1, players), "clan", recorder="Me"), user_id=alice)
+    assert {p["name"] for p in db.get_player_summary(alice)} == {"Me", "Mate"}
+
+
+def test_the_initial_team_gathers_everyone_once(db, monkeypatch):
+    alice = db.create_user("alice", "hash")["id"]
+    bob = db.create_user("bob", "hash")["id"]
+    monkeypatch.setattr(db, "ADMIN_USER_IDS", frozenset({bob}))
+    with db.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM schema_flags WHERE name = 'initial_team'")
+        conn.commit()
+        db._migrate_initial_team(conn)
+    teams = db.get_user_teams(alice)
+    assert [(t["name"], t["role"], t["members"]) for t in teams] == [(db.INITIAL_TEAM_NAME, "member", 2)]
+    assert db.get_user_teams(bob)[0]["role"] == "owner"  # an admin owns it if there is one
+
+    db.create_user("carol", "hash")
+    with db.get_conn() as conn:
+        db._migrate_initial_team(conn)
+    assert db.get_admin_overview()["teams"] == 1
+    assert db.get_team_members(teams[0]["id"])[0]["username"] == "bob"
+
+
+def test_invites_are_spent_only_on_real_joins(db):
+    alice = db.create_user("alice", "hash")["id"]
+    bob = db.create_user("bob", "hash")["id"]
+    carol = db.create_user("carol", "hash")["id"]
+    team = db.create_team("Взвод", alice)["id"]
+    db.create_invite(team, alice, "one", 7, 1)
+    assert db.accept_invite("one", alice) == ("already", team)
+    assert db.accept_invite("one", bob) == ("joined", team)
+    assert db.accept_invite("one", carol) == ("invalid", None)
+    assert db.get_invite("one") is None and db.list_invites(team) == []
+
+    db.create_invite(team, alice, "two", 7, None)
+    assert db.get_invite("two")["team_name"] == "Взвод"
+    assert db.revoke_invite(team, "two") and db.accept_invite("two", carol) == ("invalid", None)
+
+
+def test_the_owner_stays_and_deleting_a_team_keeps_the_battles(db, seeded):
+    alice, bob = seeded["alice"], seeded["bob"]
+    team = db.create_team("Взвод", alice)["id"]
+    db.accept_invite(db.create_invite(team, alice, "c", 7, None)["code"], bob)
+    assert not db.remove_member(team, alice)
+    assert db.get_member_role(team, alice) == "owner"
+    db.delete_team(team)
+    assert db.get_team(team) is None and db.get_user_teams(bob) == []
+    assert db.get_db_totals(Scope("all"))["total_battles"] == 3
+
+
+def test_admin_overview_counts_the_whole_database(db, seeded):
+    overview = db.get_admin_overview()
+    assert (overview["battles"], overview["users"], overview["teams"]) == (3, 2, 0)
+    assert sum(m["battles"] for m in overview["by_mode"]) == 3
+    assert overview["by_day"][0] == {"day": "2025-01-04", "battles": 1}
+
+
+# --- accounts ---
+
+def test_token_versions_and_consent_are_stored(db):
+    user = db.create_user("ivan", "hash", "2026-11-09")["id"]
+    account = db.get_user_auth(user)
+    assert (account["token_version"], account["consent_version"]) == (0, "2026-11-09")
+    assert db.set_password(user, "hash2") == 1 and db.bump_token_version(user) == 2
+    assert db.get_user_auth(user)["password_hash"] == "hash2"
+    assert db.get_user_by_username("IVAN")["token_version"] == 2
+    db.record_consent(user, "2027-01-01")
+    assert db.get_user_auth(user)["consent_version"] == "2027-01-01"
+    assert db.get_user_auth(999) is None
+
+
+def test_deleting_a_user_keeps_shared_battles_and_hands_teams_over(db):
+    alice = db.create_user("alice", "hash")["id"]
+    bob = db.create_user("bob", "hash")["id"]
+    shared = make_battle("shared", "Энск", "win", 1, [{"name": "P1"}])
+    own = make_battle("own", "Энск", "win", 1, [{"name": "P1"}])
+    db.save_battle(shared, user_id=alice)
+    db.save_battle(own, user_id=alice)
+    db.save_battle(shared, user_id=bob)
+    db.hide_player(alice, "P1")
+    kept = db.create_team("Взвод", alice)["id"]
+    db.accept_invite(db.create_invite(kept, alice, "c", 7, None)["code"], bob)
+    alone = db.create_team("Соло", alice)["id"]
+
+    assert db.delete_user(alice) == {"battles_deleted": 1, "teams_handed_over": 1, "teams_deleted": 1}
+    assert db.get_user_auth(alice) is None
+    assert [b["battle_hash"] for b in db.get_battles_export(None)] == ["shared"]
+    assert db.get_member_role(kept, bob) == "owner" and db.get_team(alone) is None
+    assert db.get_db_totals(bob)["total_battles"] == 1
+    with db.get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM player_stats")
+        assert cur.fetchone()["n"] == 1  # the deleted battle's stats went with it
+
+
+# --- period and daily series ---
+
+def test_a_period_narrows_every_scope(db, seeded):
+    for scope in (Scope("all", date_from="2025-01-03"), Scope("mine", user_id=seeded["alice"], date_to="2025-01-02"),
+                  Scope("visible", user_id=seeded["alice"], date_from="2025-01-03", date_to="2025-01-03")):
+        assert db.get_db_totals(scope)["total_battles"] in (1, 2), scope
+    assert db.get_db_totals(Scope("all", date_from="2025-01-03"))["total_battles"] == 2
+    assert db.get_db_totals(Scope("all", date_from="2025-01-03", mode="clan"))["total_battles"] == 0
+
+
+def test_daily_summary_averages_our_side_per_day(db, seeded):
+    daily = db.get_daily_summary(Scope("mine", user_id=seeded["alice"]))
+    first, second = daily["days"]
+    assert (first["day"], first["battles"], first["wins"]) == ("2025-01-02", 1, 1)
+    assert first["avg_damage"] == 2000          # P1 3000 and P2 1000; the enemy's 9999 is not ours
+    assert float(first["accuracy"]) == round(11 / 16 * 100, 1)
+    assert (second["losses"], second["avg_damage"]) == (1, 1500)
+    assert daily["totals"]["battles"] == 2 and daily["totals"]["avg_damage"] == 1750
+    db.hide_player(seeded["alice"], "P2")
+    hidden = db.get_daily_summary(Scope("mine", user_id=seeded["alice"]), viewer_id=seeded["alice"])
+    assert hidden["totals"]["avg_damage"] == 2000  # P1 only: 3000 and 1000

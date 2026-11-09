@@ -51,3 +51,33 @@ DB_POOL_MAX = _int_env("DB_POOL_MAX", 5)
 # Failed logins per username+IP before the pair is locked out for a while.
 LOGIN_MAX_ATTEMPTS = _int_env("LOGIN_MAX_ATTEMPTS", 10)
 LOGIN_LOCKOUT_SECONDS = _int_env("LOGIN_LOCKOUT_SECONDS", 300)
+
+# User ids (comma-separated) that see the whole database and the admin page. Ids, not
+# usernames: a name listed before its owner registers could be claimed by anyone.
+ADMIN_USER_IDS = frozenset(
+    int(part) for part in os.environ.get("ADMIN_USER_IDS", "").replace(" ", "").split(",") if part.isdigit()
+)
+
+# Teams: how many a user may own, and invite links.
+MAX_TEAMS_PER_USER = _int_env("MAX_TEAMS_PER_USER", 5)
+MAX_TEAM_MEMBERS = _int_env("MAX_TEAM_MEMBERS", 50)
+INVITE_MAX_DAYS = _int_env("INVITE_MAX_DAYS", 30)
+
+# A parsed battle can be saved this long after upload (see src/tickets.py).
+BATTLE_TICKET_TTL_HOURS = _int_env("BATTLE_TICKET_TTL_HOURS", 24)
+
+# How many reverse proxies stand in front of the app (the hosting's load balancer is one).
+# The client's address is then read from X-Forwarded-For, counting that many hops from the
+# right; entries further left are whatever the client chose to send and are ignored.
+# 0 trusts nothing and uses the TCP peer. Behind a proxy, 0 makes every visitor look like
+# the proxy: per-IP limits would then lump everyone together.
+TRUSTED_PROXY_HOPS = _int_env("TRUSTED_PROXY_HOPS", 0)
+
+# Per-IP and per-user rate limits (in-memory, per instance).
+REGISTRATIONS_PER_HOUR = _int_env("REGISTRATIONS_PER_HOUR", 5)
+LOGIN_FAILURES_PER_IP = _int_env("LOGIN_FAILURES_PER_IP", 50)  # any usernames, per lockout window
+UPLOAD_FILES_PER_HOUR = _int_env("UPLOAD_FILES_PER_HOUR", 1000)
+
+# Version of the personal-data consent text (static/consent.html). Bump it when the text
+# changes: everyone is then asked to accept the new one on their next visit.
+CONSENT_VERSION = os.environ.get("CONSENT_VERSION", "2026-11-09").strip() or "2026-11-09"

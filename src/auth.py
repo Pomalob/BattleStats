@@ -26,10 +26,12 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def create_token(user_id: int, username: str) -> str:
+def create_token(user_id: int, username: str, version: int = 0) -> str:
+    """version is the user's token_version: bumping it in the database voids every older token."""
     payload = {
         "sub": str(user_id),
         "username": username,
+        "ver": version,
         "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(days=TOKEN_TTL_DAYS),
     }

@@ -1,13 +1,15 @@
 import ipaddress
 import threading
 from contextlib import contextmanager
+from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 from psycopg2.pool import ThreadedConnectionPool
 
-from config import DATABASE_URL, DB_POOL_MAX, DB_POOL_MIN
+from config import ADMIN_USER_IDS, DATABASE_URL, DB_POOL_MAX, DB_POOL_MIN
+from replay_parser import SQUAD_MODES, battle_mode
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -63,8 +65,44 @@ CREATE TABLE IF NOT EXISTS hidden_players (
     PRIMARY KEY (user_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS teams (
+    id         SERIAL PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- role: owner (manages the team and its invites) or member
+CREATE TABLE IF NOT EXISTS team_members (
+    team_id   INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role      TEXT NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (team_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS team_invites (
+    code       TEXT PRIMARY KEY,
+    team_id    INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    max_uses   INTEGER,
+    uses       INTEGER NOT NULL DEFAULT 0
+);
+
+-- One-off data migrations that must not run again, whatever the tables hold later.
+CREATE TABLE IF NOT EXISTS schema_flags (
+    name    TEXT PRIMARY KEY,
+    done_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_members_user   ON team_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_team_invites_team   ON team_invites(team_id);
 CREATE INDEX IF NOT EXISTS idx_player_stats_battle ON player_stats(battle_id);
 CREATE INDEX IF NOT EXISTS idx_player_stats_name   ON player_stats(name);
+-- The squad rule (_SQUAD_FOCUS) looks up the uploader by name inside one battle.
+CREATE INDEX IF NOT EXISTS idx_player_stats_battle_name ON player_stats(battle_id, name);
 CREATE INDEX IF NOT EXISTS idx_battles_date        ON battles(date_time);
 CREATE INDEX IF NOT EXISTS idx_user_battles_user   ON user_battles(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_battles_battle ON user_battles(battle_id);
@@ -193,6 +231,13 @@ def init_db():
             WHERE date_time ~ '^[0-9]{2}\.[0-9]{2}\.[0-9]{4}'
         """)
         _migrate_map_names(conn)
+        _run_migration(conn, "ALTER TABLE battles ADD COLUMN IF NOT EXISTS mode TEXT")
+        _run_migration(conn, "CREATE INDEX IF NOT EXISTS idx_battles_mode ON battles(mode)")
+        _migrate_battle_modes(conn)
+        _migrate_initial_team(conn)
+        _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0")
+        _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_version TEXT")
+        _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_at TIMESTAMPTZ")
 
 
 def _run_migration(conn, sql: str):
@@ -217,19 +262,71 @@ def _migrate_map_names(conn):
     conn.commit()
 
 
+def _migrate_battle_modes(conn):
+    """Fill battles.mode for rows stored before the column existed, from their details.
+
+    A failure is logged, not raised: startup must not fail over it, and the next start retries.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, details FROM battles WHERE mode IS NULL")
+            for row in cur.fetchall():
+                cur.execute("UPDATE battles SET mode = %s WHERE id = %s", (battle_mode(row["details"]), row["id"]))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[DB] battle mode backfill failed, will retry on next start: {e}")
+
+
+INITIAL_TEAM_NAME = "Наша команда"
+
+
+def _migrate_initial_team(conn):
+    """Once, when teams first appear: everyone already registered becomes one team.
+
+    Before teams every user saw every battle, so this keeps the existing group seeing what
+    it saw. The flag stops it from ever running again, so later sign-ups stay teamless.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO schema_flags (name) VALUES ('initial_team') ON CONFLICT DO NOTHING RETURNING name")
+            if cur.fetchone() is None:
+                conn.rollback()
+                return
+            cur.execute("SELECT id, username FROM users ORDER BY id")
+            users = cur.fetchall()
+            if users:
+                admins = [u for u in users if u["id"] in ADMIN_USER_IDS]
+                owner = (admins or users)[0]["id"]
+                cur.execute("INSERT INTO teams (name, created_by) VALUES (%s, %s) RETURNING id",
+                            (INITIAL_TEAM_NAME, owner))
+                team_id = cur.fetchone()["id"]
+                for u in users:
+                    cur.execute("INSERT INTO team_members (team_id, user_id, role) VALUES (%s, %s, %s)",
+                                (team_id, u["id"], "owner" if u["id"] == owner else "member"))
+        conn.commit()
+    except Exception as e:
+        # The flag goes back with the rollback, so the next start tries again.
+        conn.rollback()
+        print(f"[DB] initial team migration failed, will retry on next start: {e}")
+
+
 # --- Auth ---
 
-def create_user(username: str, password_hash: str) -> dict | None:
-    """Create a user, or return None when the name is taken (case-insensitively)."""
+def create_user(username: str, password_hash: str, consent_version: str | None = None) -> dict | None:
+    """Create a user, or return None when the name is taken (case-insensitively).
+
+    consent_version records which consent text the user accepted at sign-up, and when.
+    """
     sql = """
-        INSERT INTO users (username, password_hash)
-        VALUES (%s, %s)
+        INSERT INTO users (username, password_hash, consent_version, consent_at)
+        VALUES (%s, %s, %s, CASE WHEN %s IS NULL THEN NULL ELSE NOW() END)
         RETURNING id, username
     """
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (username, password_hash))
+                cur.execute(sql, (username, password_hash, consent_version, consent_version))
                 row = cur.fetchone()
     except psycopg2.errors.UniqueViolation:
         return None
@@ -240,11 +337,82 @@ def get_user_by_username(username: str) -> dict | None:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, username, password_hash FROM users WHERE lower(username) = lower(%s)",
+                "SELECT id, username, password_hash, token_version FROM users WHERE lower(username) = lower(%s)",
                 (username,),
             )
             row = cur.fetchone()
     return dict(row) if row else None
+
+
+def get_user_auth(user_id: int) -> dict | None:
+    """What every authenticated request checks: the account still exists, the token's
+    version is current, and which consent it has given."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, username, password_hash, token_version, consent_version"
+                        " FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def set_password(user_id: int, password_hash: str) -> int:
+    """New password; every token issued before it stops working. Returns the new version."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET password_hash = %s, token_version = token_version + 1"
+                        " WHERE id = %s RETURNING token_version", (password_hash, user_id))
+            return cur.fetchone()["token_version"]
+
+
+def bump_token_version(user_id: int) -> int:
+    """Sign out everywhere: every token issued so far stops working."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET token_version = token_version + 1 WHERE id = %s"
+                        " RETURNING token_version", (user_id,))
+            return cur.fetchone()["token_version"]
+
+
+def record_consent(user_id: int, version: str) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET consent_version = %s, consent_at = NOW() WHERE id = %s",
+                        (version, user_id))
+
+
+def delete_user(user_id: int) -> dict:
+    """Delete an account and what belongs only to it, in one transaction.
+
+    - Battles only this user uploaded are deleted with their stats; battles someone else
+      also uploaded stay, as theirs.
+    - Teams this user owns pass to the member who joined earliest; a team left empty goes.
+    - The account row goes last, taking its memberships, hidden players and uploads with it.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM battles b
+                WHERE b.id IN (SELECT battle_id FROM user_battles WHERE user_id = %s)
+                  AND NOT EXISTS (SELECT 1 FROM user_battles o WHERE o.battle_id = b.id AND o.user_id <> %s)
+            """, (user_id, user_id))
+            battles = cur.rowcount
+            cur.execute("SELECT team_id FROM team_members WHERE user_id = %s AND role = 'owner'", (user_id,))
+            moved = deleted_teams = 0
+            for row in cur.fetchall():
+                cur.execute("""
+                    SELECT user_id FROM team_members WHERE team_id = %s AND user_id <> %s
+                    ORDER BY joined_at, user_id LIMIT 1
+                """, (row["team_id"], user_id))
+                heir = cur.fetchone()
+                if heir:
+                    cur.execute("UPDATE team_members SET role = 'owner' WHERE team_id = %s AND user_id = %s",
+                                (row["team_id"], heir["user_id"]))
+                    moved += 1
+                else:
+                    cur.execute("DELETE FROM teams WHERE id = %s", (row["team_id"],))
+                    deleted_teams += 1
+            cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    return {"battles_deleted": battles, "teams_handed_over": moved, "teams_deleted": deleted_teams}
 
 
 # --- Battles ---
@@ -259,8 +427,8 @@ def save_battle(battle_dict: dict, user_id: int) -> str:
     upload of the same replay, so old history can be filled in by uploading it again.
     """
     sql_battle = """
-        INSERT INTO battles (filename, map_name, date_time, battle_hash, result, player_team, winner_team, details)
-        VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(battle_hash)s, %(result)s, %(player_team)s, %(winner_team)s, %(details)s)
+        INSERT INTO battles (filename, map_name, date_time, battle_hash, result, player_team, winner_team, mode, details)
+        VALUES (%(filename)s, %(map_name)s, %(date_time)s, %(battle_hash)s, %(result)s, %(player_team)s, %(winner_team)s, %(mode)s, %(details)s)
         ON CONFLICT (battle_hash) DO NOTHING
         RETURNING id
     """
@@ -279,7 +447,8 @@ def save_battle(battle_dict: dict, user_id: int) -> str:
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql_battle, {**battle_dict, "details": details})
+            mode = battle_dict.get("mode") or battle_mode(battle_dict.get("details"))
+            cur.execute(sql_battle, {**battle_dict, "mode": mode, "details": details})
             row = cur.fetchone()
 
             if row:
@@ -337,17 +506,17 @@ def _backfill_details(cur, battle_id: int, details, players: list[dict]) -> None
             )
 
 
-def get_battles_list(user_id: int | None = None, viewer_id: int | None = None) -> list[dict]:
-    join, params = _scope_join(user_id)
+def get_battles_list(scope=None, viewer_id: int | None = None) -> list[dict]:
+    join, params = _scope_join(scope)
     sql = f"""
-        SELECT b.id, b.date_time, b.map_name, b.result, b.filename,
+        SELECT b.id, b.date_time, b.map_name, b.result, b.filename, b.mode,
                COUNT(DISTINCT ps.id) AS player_count,
                BOOL_OR(own.user_id IS NOT NULL) AS mine
         FROM battles b
         {join}
         LEFT JOIN player_stats ps ON ps.battle_id = b.id
         LEFT JOIN user_battles own ON own.battle_id = b.id AND own.user_id = %s
-        GROUP BY b.id, b.date_time, b.map_name, b.result, b.filename
+        GROUP BY b.id, b.date_time, b.map_name, b.result, b.filename, b.mode
         ORDER BY b.date_time DESC
     """
     with get_conn() as conn:
@@ -357,7 +526,7 @@ def get_battles_list(user_id: int | None = None, viewer_id: int | None = None) -
 
 
 def get_battles_export(
-    user_id: int | None = None,
+    scope=None,
     viewer_id: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -367,7 +536,7 @@ def get_battles_export(
     date_from / date_to are inclusive YYYY-MM-DD days, compared against the date part
     of date_time. The recorder block is the viewer's own upload of the battle, if any.
     """
-    join, params = _scope_join(user_id)
+    join, params = _scope_join(scope)
     where, where_params = [], []
     if date_from:
         where.append("left(b.date_time, 10) >= %s")
@@ -377,7 +546,7 @@ def get_battles_export(
         where_params.append(date_to)
     sql_battles = f"""
         SELECT b.id, b.date_time, b.map_name, b.result, b.winner_team, b.player_team,
-               b.battle_hash, b.filename, b.details,
+               b.battle_hash, b.filename, b.mode, b.details,
                own.recorder, (own.user_id IS NOT NULL) AS mine
         FROM battles b
         {join}
@@ -460,11 +629,77 @@ def unhide_player(user_id: int, name: str) -> bool:
 
 # --- Analytics ---
 
-def _scope_join(user_id: int | None) -> tuple[str, list]:
-    """JOIN that narrows `battles b` down to the ones this user uploaded."""
-    if user_id:
-        return "JOIN user_battles ub ON ub.battle_id = b.id AND ub.user_id = %s", [user_id]
-    return "", []
+@dataclass(frozen=True)
+class Scope:
+    """Which battles a query looks at.
+
+    kind: "mine" (uploaded by user_id), "team" (uploaded by any member of team_id),
+    "visible" (mine plus every team user_id is in) or "all" (the whole database, admin only).
+    mode narrows any of them to one battle mode, date_from / date_to (inclusive YYYY-MM-DD)
+    to a period.
+    """
+    kind: str
+    user_id: int | None = None
+    team_id: int | None = None
+    mode: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+
+
+def _as_scope(scope) -> Scope:
+    if isinstance(scope, Scope):
+        return scope
+    # A bare user id is the "mine" scope, None the whole database.
+    return Scope("mine", user_id=scope) if scope else Scope("all")
+
+
+def _scope_join(scope) -> tuple[str, list]:
+    """JOIN that narrows `battles b` down to the battles in scope."""
+    scope = _as_scope(scope)
+    conds, cond_params = [], []
+    if scope.mode:
+        conds.append("bs.mode = %s")
+        cond_params.append(scope.mode)
+    if scope.date_from:
+        conds.append("left(bs.date_time, 10) >= %s")
+        cond_params.append(scope.date_from)
+    if scope.date_to:
+        conds.append("left(bs.date_time, 10) <= %s")
+        cond_params.append(scope.date_to)
+    if scope.kind == "all":
+        if not conds:
+            return "", []
+        return (f"JOIN (SELECT bs.id AS battle_id FROM battles bs WHERE {' AND '.join(conds)}) sc"
+                " ON sc.battle_id = b.id", cond_params)
+    if scope.kind == "mine":
+        owners, params = "ub.user_id = %s", [scope.user_id]
+    elif scope.kind == "team":
+        owners, params = "ub.user_id IN (SELECT user_id FROM team_members WHERE team_id = %s)", [scope.team_id]
+    elif scope.kind == "visible":
+        owners = ("(ub.user_id = %s OR ub.user_id IN (SELECT m2.user_id FROM team_members m1"
+                  " JOIN team_members m2 ON m2.team_id = m1.team_id WHERE m1.user_id = %s))")
+        params = [scope.user_id, scope.user_id]
+    else:
+        raise ValueError(f"unknown scope {scope.kind!r}")
+    extra = "".join(f" AND {c}" for c in conds)
+    return (
+        "JOIN (SELECT DISTINCT ub.battle_id FROM user_battles ub JOIN battles bs ON bs.id = ub.battle_id"
+        f" WHERE {owners}{extra}) sc ON sc.battle_id = b.id",
+        [*params, *cond_params],
+    )
+
+
+# Standard and Onslaught battles are matchmade: everyone else in them is a stranger, so
+# only whoever uploaded the battle and their platoon (same non-zero prebattleID; solo
+# players have 0) count as "ours". Clan battles are played by the team itself: everyone.
+_SQUAD_FOCUS = f"""
+        AND (b.mode IS NULL OR b.mode NOT IN ({", ".join(f"'{m}'" for m in SQUAD_MODES)}) OR EXISTS (
+            SELECT 1 FROM user_battles fu
+            JOIN player_stats me ON me.battle_id = fu.battle_id AND me.name = fu.recorder->>'playerName'
+            WHERE fu.battle_id = ps.battle_id
+              AND (me.id = ps.id OR (COALESCE(me.details->>'prebattleID', '0') <> '0'
+                                     AND me.details->>'prebattleID' = ps.details->>'prebattleID'))
+        ))"""
 
 
 def _hidden_filter(viewer_id: int | None) -> tuple[str, list]:
@@ -477,8 +712,8 @@ def _hidden_filter(viewer_id: int | None) -> tuple[str, list]:
     return "", []
 
 
-def get_db_totals(user_id: int | None = None) -> dict:
-    join, params = _scope_join(user_id)
+def get_db_totals(scope=None) -> dict:
+    join, params = _scope_join(scope)
     sql = f"""
         SELECT
             COUNT(*)                                           AS total_battles,
@@ -495,9 +730,9 @@ def get_db_totals(user_id: int | None = None) -> dict:
             return dict(cur.fetchone())
 
 
-def count_players(user_id: int | None = None, viewer_id: int | None = None) -> int:
+def count_players(scope=None, viewer_id: int | None = None) -> int:
     """How many distinct team-mates appear at all, before any min_battles filter."""
-    join, params = _scope_join(user_id)
+    join, params = _scope_join(scope)
     hidden, hidden_params = _hidden_filter(viewer_id)
     sql = f"""
         SELECT COUNT(DISTINCT ps.name) AS n
@@ -505,6 +740,7 @@ def count_players(user_id: int | None = None, viewer_id: int | None = None) -> i
         JOIN battles b ON b.id = ps.battle_id
         {join}
         WHERE ps.team = b.player_team
+        {_SQUAD_FOCUS}
         {hidden}
     """
     with get_conn() as conn:
@@ -514,14 +750,14 @@ def count_players(user_id: int | None = None, viewer_id: int | None = None) -> i
 
 
 def get_player_summary(
-    user_id: int | None = None,
+    scope=None,
     viewer_id: int | None = None,
     min_battles: int = 1,
 ) -> list[dict]:
     """Team-mate averages. min_battles drops the one-off randoms that otherwise
     bury the people you actually play with — with a few hundred battles uploaded,
     most names in the table appear exactly once."""
-    join, params = _scope_join(user_id)
+    join, params = _scope_join(scope)
     hidden, hidden_params = _hidden_filter(viewer_id)
     sql = f"""
         SELECT
@@ -544,6 +780,7 @@ def get_player_summary(
         JOIN battles b ON b.id = ps.battle_id
         {join}
         WHERE ps.team = b.player_team
+        {_SQUAD_FOCUS}
         {hidden}
         GROUP BY ps.name
         HAVING COUNT(DISTINCT ps.battle_id) >= %s
@@ -555,8 +792,45 @@ def get_player_summary(
             return [dict(r) for r in cur.fetchall()]
 
 
-def get_map_summary(user_id: int | None = None) -> list[dict]:
-    join, params = _scope_join(user_id)
+def get_daily_summary(scope=None, viewer_id: int | None = None) -> dict:
+    """Day by day, and for the whole scope: battles and results, plus the averages of "our"
+    players (the recorder's side; in matchmade modes only the uploader and their platoon).
+
+    Averages are per player per battle, so a 7-man clan battle weighs seven rows.
+    """
+    join, params = _scope_join(scope)
+    hidden, hidden_params = _hidden_filter(viewer_id)
+    metrics = """
+            COUNT(DISTINCT b.id)                                            AS battles,
+            COUNT(DISTINCT b.id) FILTER (WHERE b.result = 'win')            AS wins,
+            COUNT(DISTINCT b.id) FILTER (WHERE b.result = 'loss')           AS losses,
+            COUNT(DISTINCT b.id) FILTER (WHERE b.result = 'draw')           AS draws,
+            ROUND(AVG(ps.damage_dealt))                                     AS avg_damage,
+            ROUND(AVG(ps.assists))                                          AS avg_assists,
+            ROUND(AVG(ps.blocked))                                          AS avg_blocked,
+            ROUND(AVG(NULLIF(ps.details->>'spotted', '')::numeric), 2)      AS avg_spotted,
+            ROUND(SUM(ps.hits)::numeric * 100 / NULLIF(SUM(ps.shots), 0), 1) AS accuracy
+    """
+    body = f"""
+        FROM battles b
+        {join}
+        JOIN player_stats ps ON ps.battle_id = b.id AND ps.team = b.player_team
+        WHERE TRUE
+        {_SQUAD_FOCUS}
+        {hidden}
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT left(b.date_time, 10) AS day, {metrics} {body} GROUP BY 1 ORDER BY 1",
+                        [*params, *hidden_params])
+            days = [dict(r) for r in cur.fetchall()]
+            cur.execute(f"SELECT {metrics} {body}", [*params, *hidden_params])
+            totals = dict(cur.fetchone())
+    return {"days": days, "totals": totals}
+
+
+def get_map_summary(scope=None) -> list[dict]:
+    join, params = _scope_join(scope)
     sql = f"""
         SELECT
             map_name,
@@ -576,13 +850,13 @@ def get_map_summary(user_id: int | None = None) -> list[dict]:
 
 
 def get_vehicle_summary(
-    user_id: int | None = None,
+    scope=None,
     viewer_id: int | None = None,
     names: list[str] | None = None,
 ) -> list[dict]:
     """Per-tank averages, restricted to `names` so this table shows the same
     players as the summary above."""
-    join, params = _scope_join(user_id)
+    join, params = _scope_join(scope)
     hidden, hidden_params = _hidden_filter(viewer_id)
     name_filter, name_params = ("AND ps.name = ANY(%s)", [list(names)]) if names is not None else ("", [])
     sql = f"""
@@ -599,6 +873,7 @@ def get_vehicle_summary(
         JOIN battles b ON b.id = ps.battle_id
         {join}
         WHERE ps.team = b.player_team
+        {_SQUAD_FOCUS}
         {hidden}
         {name_filter}
         GROUP BY ps.name, ps.vehicle
@@ -608,3 +883,167 @@ def get_vehicle_summary(
         with conn.cursor() as cur:
             cur.execute(sql, [*params, *hidden_params, *name_params])
             return [dict(r) for r in cur.fetchall()]
+
+
+# --- Teams ---
+
+def create_team(name: str, owner_id: int) -> dict:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO teams (name, created_by) VALUES (%s, %s) RETURNING id, name",
+                        (name, owner_id))
+            team = dict(cur.fetchone())
+            cur.execute("INSERT INTO team_members (team_id, user_id, role) VALUES (%s, %s, 'owner')",
+                        (team["id"], owner_id))
+    return {**team, "role": "owner", "members": 1}
+
+
+def get_user_teams(user_id: int) -> list[dict]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT t.id, t.name, m.role,
+                       (SELECT COUNT(*) FROM team_members x WHERE x.team_id = t.id) AS members
+                FROM team_members m JOIN teams t ON t.id = m.team_id
+                WHERE m.user_id = %s
+                ORDER BY t.name, t.id
+            """, (user_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_team(team_id: int) -> dict | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, created_at FROM teams WHERE id = %s", (team_id,))
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def get_member_role(team_id: int, user_id: int) -> str | None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT role FROM team_members WHERE team_id = %s AND user_id = %s", (team_id, user_id))
+            row = cur.fetchone()
+    return row["role"] if row else None
+
+
+def get_team_members(team_id: int) -> list[dict]:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.id AS user_id, u.username, m.role, m.joined_at,
+                       (SELECT COUNT(*) FROM user_battles ub WHERE ub.user_id = u.id) AS battles
+                FROM team_members m JOIN users u ON u.id = m.user_id
+                WHERE m.team_id = %s
+                ORDER BY m.role = 'owner' DESC, lower(u.username)
+            """, (team_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def rename_team(team_id: int, name: str) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE teams SET name = %s WHERE id = %s", (name, team_id))
+
+
+def delete_team(team_id: int) -> None:
+    """Only the team and its memberships go: the battles belong to whoever uploaded them."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM teams WHERE id = %s", (team_id,))
+
+
+def remove_member(team_id: int, user_id: int) -> bool:
+    """Drop a member. The owner cannot be removed: they delete the team instead."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM team_members WHERE team_id = %s AND user_id = %s AND role <> 'owner'",
+                        (team_id, user_id))
+            return cur.rowcount > 0
+
+
+def create_invite(team_id: int, created_by: int, code: str, days: int, max_uses: int | None) -> dict:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO team_invites (code, team_id, created_by, expires_at, max_uses)
+                VALUES (%s, %s, %s, NOW() + make_interval(days => %s), %s)
+                RETURNING code, expires_at, max_uses, uses
+            """, (code, team_id, created_by, days, max_uses))
+            return dict(cur.fetchone())
+
+
+def list_invites(team_id: int) -> list[dict]:
+    """Invites that still work: not expired and not used up."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT code, expires_at, max_uses, uses FROM team_invites
+                WHERE team_id = %s AND expires_at > NOW() AND (max_uses IS NULL OR uses < max_uses)
+                ORDER BY created_at DESC
+            """, (team_id,))
+            return [dict(r) for r in cur.fetchall()]
+
+
+def revoke_invite(team_id: int, code: str) -> bool:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM team_invites WHERE team_id = %s AND code = %s", (team_id, code))
+            return cur.rowcount > 0
+
+
+def get_invite(code: str) -> dict | None:
+    """A working invite with its team's name, or None if it is unknown, expired or used up."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT i.code, i.team_id, t.name AS team_name, i.expires_at
+                FROM team_invites i JOIN teams t ON t.id = i.team_id
+                WHERE i.code = %s AND i.expires_at > NOW() AND (i.max_uses IS NULL OR i.uses < i.max_uses)
+            """, (code,))
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def accept_invite(code: str, user_id: int) -> tuple[str, int | None]:
+    """("joined" | "already" | "invalid", team_id). A use is only spent on a real join."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT team_id FROM team_invites
+                WHERE code = %s AND expires_at > NOW() AND (max_uses IS NULL OR uses < max_uses)
+                FOR UPDATE
+            """, (code,))
+            row = cur.fetchone()
+            if not row:
+                return "invalid", None
+            team_id = row["team_id"]
+            cur.execute("INSERT INTO team_members (team_id, user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                        (team_id, user_id))
+            if not cur.rowcount:
+                return "already", team_id
+            cur.execute("UPDATE team_invites SET uses = uses + 1 WHERE code = %s", (code,))
+            return "joined", team_id
+
+
+# --- Admin ---
+
+def get_admin_overview() -> dict:
+    """Size of the whole database, for the admin page."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT (SELECT COUNT(*) FROM battles)      AS battles,
+                       (SELECT COUNT(*) FROM player_stats) AS player_rows,
+                       (SELECT COUNT(*) FROM users)        AS users,
+                       (SELECT COUNT(*) FROM teams)        AS teams,
+                       (SELECT COUNT(DISTINCT details->>'accountDBID') FROM player_stats) AS accounts
+            """)
+            overview = dict(cur.fetchone())
+            cur.execute("SELECT COALESCE(mode, 'other') AS mode, COUNT(*) AS battles"
+                        " FROM battles GROUP BY 1 ORDER BY 2 DESC")
+            overview["by_mode"] = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT left(date_time, 10) AS day, COUNT(*) AS battles FROM battles"
+                        " GROUP BY 1 ORDER BY 1 DESC LIMIT 30")
+            overview["by_day"] = [dict(r) for r in cur.fetchall()]
+    return overview

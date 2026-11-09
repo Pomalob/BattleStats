@@ -7,3 +7,5 @@ venv/
 .pytest_cache/
 *.mtreplay
 *.wotreplay
+frontend/node_modules/
+frontend/dist/

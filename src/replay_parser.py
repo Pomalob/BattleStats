@@ -78,6 +78,11 @@ BATTLE_COMMON_FIELDS = (
 RECORDER_FIELDS = (
     "playerName", "playerID", "playerVehicle", "hasMods", "clientVersionFromExe",
 )
+# The recorder's own Onslaught (comp7) standing, from results.personal.avatar: only the
+# recorder's rating is in the file, everyone else has just their rank in `ranked`.
+RECORDER_AVATAR_FIELDS = (
+    "comp7Rating", "comp7RatingDelta", "comp7Rank", "comp7QualActive", "comp7QualBattleIndex",
+)
 PLAYER_ROSTER_FIELDS = (
     "name", "fakeName", "vehicleType", "team", "maxHealth", "isAlive", "isTeamKiller", "wtr",
     "igrType", "avatarSessionID", "badges", "overriddenBadge", "ranked", "selectedComp7Skill",
@@ -107,7 +112,36 @@ PLAYER_RESULT_FIELDS = (
     "deathReason", "killerID", "lifeTime", "health", "mileage", "deathCount",
     # base capture
     "capturePoints", "droppedCapturePoints", "capturingBase",
+    # Onslaught (comp7): prestige points, role skill, repairs
+    "comp7PrestigePoints", "roleSkillUsed", "healthRepair", "alliedHealthRepair",
 )
+
+# Battle modes the site tells apart, by the replay's bonusType (battleType in the metadata
+# block carries the same number and survives in replays without results). Checked on
+# real replays: 1 random 15x15, 20 clan skirmish 7x7, 43 Onslaught 7x7, 2 training room.
+# 5/10/11/13/15/21 are the other clan formats (stronghold battles 15x15, global map,
+# clan tournaments) as the client numbers them.
+MODE_STANDARD, MODE_CLAN, MODE_ONSLAUGHT, MODE_OTHER = "standard", "clan", "onslaught", "other"
+MODES = (MODE_STANDARD, MODE_CLAN, MODE_ONSLAUGHT, MODE_OTHER)
+# Matchmade modes: the rest of the team are strangers, only the uploader's platoon is "ours".
+SQUAD_MODES = (MODE_STANDARD, MODE_ONSLAUGHT)
+_MODE_BY_BONUS_TYPE = {
+    1: MODE_STANDARD,
+    5: MODE_CLAN, 10: MODE_CLAN, 11: MODE_CLAN, 13: MODE_CLAN, 15: MODE_CLAN, 20: MODE_CLAN,
+    21: MODE_CLAN,
+    43: MODE_ONSLAUGHT,
+}
+
+
+def battle_mode(details: dict | None) -> str:
+    """standard / clan / onslaught / other, from a battle's stored details."""
+    details = details if isinstance(details, dict) else {}
+    for key in ("bonusType", "battleType"):
+        try:
+            return _MODE_BY_BONUS_TYPE.get(int(details.get(key)), MODE_OTHER)
+        except (TypeError, ValueError):
+            continue
+    return MODE_OTHER
 
 
 def _pick(source, fields) -> dict:
@@ -386,6 +420,9 @@ def parse_replay_bytes(data: bytes, filename: str) -> BattleResult:
         )
 
     battle_details.update(_pick(common, BATTLE_COMMON_FIELDS))
+    personal = results.get("personal")
+    if isinstance(personal, dict):
+        recorder.update(_pick(personal.get("avatar"), RECORDER_AVATAR_FIELDS))
     if "arenaUniqueID" not in battle_details and "arenaUniqueID" in results:
         battle_details["arenaUniqueID"] = results["arenaUniqueID"]
 

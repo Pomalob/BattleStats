@@ -213,3 +213,33 @@ def test_an_unfinished_replay_still_carries_battle_and_recorder_details():
     battle = parse_replay_bytes(build_replay(with_results=False), "b.mtreplay")
     assert battle.details["serverName"] == "RU4"
     assert battle.recorder["playerID"] == 7
+
+
+# --- battle modes and Onslaught (comp7) data ---
+
+@pytest.mark.parametrize("details,mode", [
+    ({"bonusType": 1}, "standard"), ({"bonusType": 20}, "clan"), ({"bonusType": 11}, "clan"),
+    ({"bonusType": 43}, "onslaught"), ({"bonusType": 2}, "other"),
+    # a replay without results has only the metadata's battleType
+    ({"battleType": 43}, "onslaught"), ({}, "other"), (None, "other"), ({"bonusType": "x"}, "other"),
+])
+def test_battle_mode_follows_the_bonus_type(details, mode):
+    from replay_parser import battle_mode
+    assert battle_mode(details) == mode
+
+
+def test_onslaught_fields_and_the_recorders_rating_are_kept():
+    players = [
+        {"name": "Alice", "team": 1, "damage": 2000, "shots": 4,
+         "extra": {"comp7PrestigePoints": 61, "roleSkillUsed": 2, "healthRepair": 300, "alliedHealthRepair": 150}},
+        {"name": "Bob", "team": 2, "damage": 900, "shots": 3},
+    ]
+    avatar = {"comp7Rating": 1830, "comp7RatingDelta": 25, "comp7Rank": [3, 1], "comp7QualActive": False,
+              "credits": 99999}
+    battle = parse_replay_bytes(build_replay(bonus_type=43, players=players, avatar=avatar), "o.mtreplay")
+    alice = next(p for p in battle.players if p.name == "Alice")
+    assert alice.details["comp7PrestigePoints"] == 61 and alice.details["alliedHealthRepair"] == 150
+    assert battle.recorder["comp7Rating"] == 1830 and battle.recorder["comp7RatingDelta"] == 25
+    assert battle.recorder["comp7Rank"] == [3, 1]
+    assert "credits" not in battle.recorder
+    assert battle.details["bonusType"] == 43
