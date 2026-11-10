@@ -33,6 +33,7 @@ class FakeDB:
         self.members: dict[tuple[int, int], str] = {}  # (team_id, user_id) -> role
         self.invites: dict[str, dict] = {}
         self._next_team_id = 1
+        self.explanations = []
 
     # --- scope: mirrors database._scope_join ---
     def _teammates(self, user_id):
@@ -246,6 +247,55 @@ class FakeDB:
     def ping(self):
         return True
 
+    # --- AI analysis ---
+    def get_period_rows(self, scope=None, viewer_id=None):
+        hidden = set(self.get_hidden_players(viewer_id)) if viewer_id else set()
+        rows = []
+        for b in sorted(self.battles.values(), key=lambda b: (b["date_time"], b["id"])):
+            if not self._in_scope(scope, b):
+                continue
+            for p in b.get("players", []):
+                if p["team"] != b["player_team"]:
+                    continue
+                d = p.get("details") or {}
+                rows.append({
+                    "battle_id": b["id"], "date_time": b["date_time"], "result": b["result"],
+                    "map_name": b["map_name"], "mode": b.get("mode"), "duration": 420,
+                    "name": p["name"], "vehicle": p["vehicle"], "tank_id": d.get("typeCompDescr"),
+                    "damage_dealt": p.get("damage_dealt", 0), "assists": p.get("assists", 0),
+                    "frags": p.get("frags", 0), "blocked": p.get("blocked", 0),
+                    "damage_received": p.get("damage_received", 0), "survived": p.get("survived", True),
+                    "shots": p.get("shots", 0), "hits": p.get("hits", 0), "piercings": p.get("piercings", 0),
+                    "spotted": d.get("spotted"), "lifetime": d.get("lifeTime"), "prestige": None,
+                    "platoon": str(d.get("prebattleID") or 0),
+                    "focus": self._counts(b, p) and p["name"] not in hidden,
+                })
+        return rows
+
+    def get_rating_rows(self, scope, user_id):
+        return []
+
+    def get_recorder_names(self, user_id):
+        names = [(r or {}).get("playerName") for (u, _), r in self.recorders.items() if u == user_id]
+        return sorted({n for n in names if n}, key=lambda n: -names.count(n))
+
+    def get_explanation(self, cache_key):
+        return next((e for e in reversed(self.explanations)
+                     if e["cache_key"] == cache_key and e["status"] == "ok"), None)
+
+    def start_explanation(self, user_id, cache_key, mode, model):
+        self.explanations.append({"user_id": user_id, "cache_key": cache_key, "mode": mode,
+                                  "status": "pending", "answer": None, "model": model,
+                                  "created_at": "2026-11-10T12:00:00"})
+        return len(self.explanations) - 1
+
+    def finish_explanation(self, explanation_id, status, answer=None, problems=None, model=None,
+                           usage=None):
+        self.explanations[explanation_id].update(status=status, answer=answer, problems=problems)
+
+    def count_explanations(self, user_id, hours=24):
+        return sum(1 for e in self.explanations if user_id is None or e["user_id"] == user_id)
+
     # --- teams ---
     def create_team(self, name, owner_id):
         team_id = self._next_team_id
@@ -347,6 +397,8 @@ def fake_db(monkeypatch):
         "delete_user", "create_team", "get_user_teams", "get_team", "get_member_role",
         "get_team_members", "rename_team", "delete_team", "remove_member", "create_invite",
         "list_invites", "revoke_invite", "get_invite", "accept_invite", "get_admin_overview",
+        "get_period_rows", "get_rating_rows", "get_recorder_names", "get_explanation",
+        "start_explanation", "finish_explanation", "count_explanations",
     ):
         monkeypatch.setattr(app_module, name, getattr(db, name))
     for limiter in (app_module._login_failures, app_module._registrations, app_module._uploaded_files):

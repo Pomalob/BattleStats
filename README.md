@@ -136,7 +136,14 @@ TEST_DATABASE_URL=postgresql://battlestats:battlestats@localhost:5432/battlestat
 | `LOGIN_FAILURES_PER_IP` | нет | `50` | Неудачных входов с одного IP (по любым логинам) за окно блокировки |
 | `UPLOAD_FILES_PER_HOUR` | нет | `1000` | Реплеев на разбор от одного аккаунта в час |
 | `BATTLE_TICKET_TTL_HOURS` | нет | `24` | Сколько часов разобранный бой можно сохранить после загрузки |
-| `CONSENT_VERSION` | нет | `2026-11-09` | Версия текста согласия; сменил текст — подними версию, и всех попросят согласиться заново |
+| `CONSENT_VERSION` | нет | `2026-11-10` | Версия текста согласия; сменил текст — подними версию, и всех попросят согласиться заново |
+| `GPTUNNEL_API_KEY` | нет | — | Ключ GPTunnel. Без него «Разбор от ИИ» выключен |
+| `EXPLAIN_MODEL` | нет | `claude-haiku-5-5` | Модель Claude в GPTunnel (список: `GET https://gptunnel.ru/v1/models`) |
+| `EXPLAIN_BASE_URL` | нет | `https://gptunnel.ru` | Адрес Anthropic-совместимого API |
+| `EXPLAIN_DAILY_LIMIT` | нет | `5` | Новых разборов в сутки на пользователя (из кеша — без лимита, админ — без лимита) |
+| `EXPLAIN_GLOBAL_DAILY_LIMIT` | нет | `300` | Новых разборов в сутки на весь сайт: потолок расходов |
+| `EXPLAIN_TIMEOUT_SECONDS` | нет | `45` | Сколько ждать ответа модели |
+| `EXPLAIN_MIN_BATTLES` | нет | `10` | Меньше боёв в периоде — разбор не строится |
 
 Сгенерировать ключ:
 

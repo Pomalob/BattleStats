@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, AuthError, filterQuery, type Daily, type Summary } from '../../api';
+import { api, AuthError, filterQuery, type Daily, type Filters, type Summary } from '../../api';
+import { ExplainButton, ExplainView, useExplain, useExplainStatus } from '../../components/AiExplain';
 import { LineChart, Sparkline } from '../../components/charts';
 import { PlayersTable } from '../../components/PlayersTable';
 import { Panel, Segmented, Skeleton } from '../../components/ui';
@@ -29,7 +30,7 @@ export function Overview() {
   if (error) return <div className="rounded-lg border border-loss/40 bg-loss/10 px-4 py-3 text-[13px]">{error}</div>;
   if (!daily || !summary) return <Loading />;
   if (daily.daily.totals.battles === 0) return <Empty days={filters.days} />;
-  return <Content key={JSON.stringify(filters)} data={{ ...daily, summary }} days={filters.days}
+  return <Content key={JSON.stringify(filters)} data={{ ...daily, summary }} filters={filters}
     minBattles={minBattles} onMinBattles={setMinBattles} />;
 }
 
@@ -84,8 +85,9 @@ function Kpi({ label, value, delta, series, delay }:
 const change = (cur: number | null | undefined, prev: number | null | undefined) =>
   cur != null && prev ? ((cur - prev) / prev) * 100 : null;
 
-function Content({ data, days, minBattles, onMinBattles }:
-  { data: Data; days: number; minBattles: number; onMinBattles: (v: number) => void }) {
+function Content({ data, filters, minBattles, onMinBattles }:
+  { data: Data; filters: Filters; minBattles: number; onMinBattles: (v: number) => void }) {
+  const days = filters.days;
   const { daily, prev, summary } = data;
   const t = daily.totals;
   const p = prev && prev.totals.battles > 0 ? prev.totals : null;
@@ -129,7 +131,7 @@ function Content({ data, days, minBattles, onMinBattles }:
               format={v => (metric === 'wins' ? `${Math.round(v)}%` : fmt(v))} />
           </div>
         </Panel>
-        <Insights summary={summary} daily={daily} winrate={winrate} />
+        <Insights summary={summary} daily={daily} winrate={winrate} filters={filters} />
       </div>
 
       <PlayersTable rows={summary.players} total={summary.players_total} minBattles={minBattles} onMinBattles={onMinBattles} />
@@ -205,12 +207,17 @@ function notesFor(summary: Summary, daily: Daily, winrate: number | null): Note[
   return notes.slice(0, 5);
 }
 
-function Insights({ summary, daily, winrate }: { summary: Summary; daily: Daily; winrate: number | null }) {
+function Insights({ summary, daily, winrate, filters }:
+  { summary: Summary; daily: Daily; winrate: number | null; filters: Filters }) {
   const notes = useMemo(() => notesFor(summary, daily, winrate), [summary, daily, winrate]);
+  const { status, reload } = useExplainStatus();
+  const ai = useExplain(filters, reload);
   const dot = { good: 'bg-win', bad: 'bg-loss', info: 'bg-accent' };
   return (
-    <Panel title="Коротко о периоде"
-      aside={<span className="rounded-full border border-line px-2 py-0.5 text-[11px] font-semibold text-dim" title="Разбор от ИИ появится позже">ИИ — скоро</span>}>
+    <Panel title={ai.answer ? 'Разбор от ИИ' : 'Коротко о периоде'}
+      aside={!ai.answer && <ExplainButton status={status} filters={filters} busy={ai.busy} onRun={ai.run} />}>
+      {ai.error && <div className="mx-5 mt-3 rounded-md border border-loss/40 bg-loss/10 px-3 py-2 text-[12.5px]">{ai.error}</div>}
+      {ai.answer ? <ExplainView answer={ai.answer} cached={ai.cached} onBack={ai.reset} /> : (
       <ul className="space-y-3 px-5 pb-5 pt-3">
         {notes.map((n, i) => (
           <li key={i} className="flex animate-fade gap-3 text-[13.5px] leading-snug" style={{ animationDelay: `${i * 60}ms` }}>
@@ -218,7 +225,7 @@ function Insights({ summary, daily, winrate }: { summary: Summary; daily: Daily;
             <span>{n.text}</span>
           </li>
         ))}
-      </ul>
+      </ul>)}
     </Panel>
   );
 }

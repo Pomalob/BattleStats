@@ -453,6 +453,19 @@ def test_a_random_battle_counts_only_the_uploaders_and_their_platoon(db):
     assert {p["name"] for p in db.get_player_summary(None)} == {"Me", "Mate", "Random"}
 
 
+def test_period_rows_mark_our_players_and_keep_the_allies_as_baseline(db):
+    alice = db.create_user("alice", "hash")["id"]
+    players = [{"name": "Me", "damage": 3000}, {"name": "Mate", "damage": 2000},
+               {"name": "Random", "damage": 1000}, {"name": "Enemy", "team": 2, "damage": 500}]
+    db.save_battle(_with_mode(make_battle("r1", "Энск", "win", 1, players), "standard", recorder="Me",
+                              platoons={"Me": 77, "Mate": 77}), user_id=alice)
+    db.hide_player(alice, "Mate")
+    rows = db.get_period_rows(Scope("mine", user_id=alice), viewer_id=alice)
+    focus = {r["name"]: r["focus"] for r in rows}
+    assert focus == {"Me": True, "Mate": False, "Random": False}, "enemies never, hidden not ours"
+    assert db.get_recorder_names(alice) == ["Me"]
+
+
 def test_clan_battles_keep_the_whole_team(db):
     alice = db.create_user("alice", "hash")["id"]
     players = [{"name": "Me"}, {"name": "Mate"}, {"name": "Enemy", "team": 2}]
@@ -572,3 +585,31 @@ def test_daily_summary_averages_our_side_per_day(db, seeded):
     db.hide_player(seeded["alice"], "P2")
     hidden = db.get_daily_summary(Scope("mine", user_id=seeded["alice"]), viewer_id=seeded["alice"])
     assert hidden["totals"]["avg_damage"] == 2000  # P1 only: 3000 and 1000
+
+
+def test_rating_rows_are_the_uploaders_own_onslaught_standing(db):
+    alice = db.create_user("alice", "hash")["id"]
+    bob = db.create_user("bob", "hash")["id"]
+    for i, (rating, delta) in enumerate(((2000, 0), (2030, 30), (2010, -20))):
+        battle = _with_mode(make_battle(f"o{i}", "Энск", "win", 1, [{"name": "Me"}, {"name": "Mate"}],
+                                        date_time=f"2025-01-0{i + 1} 20:00:00"), "onslaught", recorder="Me")
+        battle["recorder"].update(comp7Rating=rating, comp7RatingDelta=delta, comp7QualActive=i == 0)
+        db.save_battle(battle, user_id=alice)
+    db.save_battle(_with_mode(make_battle("s", "Энск", "win", 1, [{"name": "Me"}]), "standard",
+                              recorder="Me"), user_id=alice)
+    rows = db.get_rating_rows(Scope("mine", user_id=alice), alice)
+    assert [(r["rating"], r["delta"], r["qualifying"]) for r in rows] == [
+        (2000, 0, True), (2030, 30, False), (2010, -20, False)]
+    assert db.get_rating_rows(Scope("all"), bob) == [], "someone else's rating is not yours"
+
+
+def test_explanations_are_cached_by_key_and_counted_per_user(db):
+    alice = db.create_user("alice", "hash")["id"]
+    db.finish_explanation(db.start_explanation(alice, "k1", "clan", "m"), "failed")
+    pending = db.start_explanation(alice, "k1", "clan", "m")
+    assert db.get_explanation("k1") is None, "neither a failed nor a pending attempt is an answer"
+    assert db.count_explanations(alice) == 2 and db.count_explanations(None) == 2
+    db.finish_explanation(pending, "ok", {"summary": "Итог"}, ["предупреждение: x"], "m", {"input_tokens": 5})
+    assert db.get_explanation("k1")["answer"] == {"summary": "Итог"}
+    db.delete_user(alice)
+    assert db.get_explanation("k1") is None, "deleting the account deletes its analyses"

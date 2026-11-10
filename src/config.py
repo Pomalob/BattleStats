@@ -80,4 +80,20 @@ UPLOAD_FILES_PER_HOUR = _int_env("UPLOAD_FILES_PER_HOUR", 1000)
 
 # Version of the personal-data consent text (static/consent.html). Bump it when the text
 # changes: everyone is then asked to accept the new one on their next visit.
-CONSENT_VERSION = os.environ.get("CONSENT_VERSION", "2026-11-09").strip() or "2026-11-09"
+CONSENT_VERSION = os.environ.get("CONSENT_VERSION", "2026-11-10").strip() or "2026-11-10"
+
+# AI analysis of a period (src/explainer.py), through the GPTunnel router's Anthropic-compatible
+# endpoint (paid in roubles, reachable from Russia). Off unless its key is set. Only the
+# anonymised facts leave the server (src/insights.py).
+EXPLAIN_API_KEY = os.environ.get("GPTUNNEL_API_KEY", "").strip()
+EXPLAIN_BASE_URL = os.environ.get("EXPLAIN_BASE_URL", "https://gptunnel.ru").strip() or "https://gptunnel.ru"
+EXPLAIN_ENABLED = bool(EXPLAIN_API_KEY)
+# A Claude model id as GPTunnel lists it (GET https://gptunnel.ru/v1/models).
+EXPLAIN_MODEL = os.environ.get("EXPLAIN_MODEL", "claude-haiku-5-5").strip() or "claude-haiku-5-5"
+# New analyses a user may request per day; repeats of an unchanged period come from the cache.
+EXPLAIN_DAILY_LIMIT = _int_env("EXPLAIN_DAILY_LIMIT", 5)
+# All users together, per day: a cap on what the router can bill however many accounts ask.
+EXPLAIN_GLOBAL_DAILY_LIMIT = _int_env("EXPLAIN_GLOBAL_DAILY_LIMIT", 300)
+EXPLAIN_TIMEOUT_SECONDS = _int_env("EXPLAIN_TIMEOUT_SECONDS", 45)
+# A period with fewer battles gives facts that are almost all noise.
+EXPLAIN_MIN_BATTLES = _int_env("EXPLAIN_MIN_BATTLES", 10)

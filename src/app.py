@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import hashlib
 import json
 import re
 import secrets
@@ -18,6 +19,8 @@ from fastapi.responses import FileResponse, JSONResponse
 import config
 import database
 import tickets
+from explainer import ExplainError, explain
+from insights import PROMPT_VERSION, build_period_facts
 from auth import create_token, decode_token, hash_password, verify_password
 from database import (
     Scope, accept_invite, count_players, create_invite, create_team, create_user, delete_battle,
@@ -25,7 +28,8 @@ from database import (
     get_map_summary, get_member_role, get_player_summary, get_team, get_team_members, get_user_by_username,
     get_user_teams, get_vehicle_summary, hide_player, init_db, list_invites, remove_member, rename_team,
     revoke_invite, save_battle, unhide_player, get_daily_summary, get_user_auth, set_password, bump_token_version,
-    record_consent, delete_user,
+    record_consent, delete_user, get_period_rows, get_rating_rows, get_recorder_names, get_explanation,
+    start_explanation, finish_explanation, count_explanations,
 )
 from replay_parser import (
     BATTLE_COMMON_FIELDS, BATTLE_META_FIELDS, PLAYER_ACCOUNT_FIELDS, PLAYER_RESULT_FIELDS,
@@ -668,6 +672,83 @@ def analytics_summary(
         # The details (SQL, table names) stay in the server log.
         traceback.print_exc()
         return JSONResponse({"error": "Внутренняя ошибка сервера"}, status_code=500)
+
+
+# --- AI analysis ---
+# The facts of a period (insights.py) go to the language model (explainer.py); the checked
+# answer is stored by a hash of the facts, so the same period is never paid for twice.
+
+EXPLAIN_MODES = ("standard", "clan", "onslaught")
+# Users with an analysis in flight: a second request is refused, so parallel clicks cannot
+# slip past the daily limit. The lock makes check-and-book atomic within the instance.
+_explaining: set[int] = set()
+_explain_lock = threading.Lock()
+
+
+def _explain_used(user: dict) -> int:
+    return count_explanations(user["id"])
+
+
+@app.get("/api/analytics/explain/status")
+def explain_status(user: dict = Depends(require_user)):
+    require_db()
+    return {"enabled": config.EXPLAIN_ENABLED, "limit": config.EXPLAIN_DAILY_LIMIT,
+            "used": _explain_used(user), "unlimited": bool(user.get("is_admin")),
+            "min_battles": config.EXPLAIN_MIN_BATTLES, "modes": list(EXPLAIN_MODES)}
+
+
+@app.post("/api/analytics/explain")
+def analytics_explain(body: dict = Depends(json_body), user: dict = Depends(require_user)):
+    require_db()
+    if not config.EXPLAIN_ENABLED:
+        raise HTTPException(503, "ИИ-разбор пока не включён")
+    if user.get("consent_required"):
+        # The current consent text is the one that tells about the AI analysis.
+        raise HTTPException(403, "Чтобы пользоваться разбором, прими новую редакцию согласия")
+    mode = body.get("mode")
+    if mode not in EXPLAIN_MODES:
+        raise HTTPException(400, "Для разбора выбери режим: стандартный, клановый или «Натиск»")
+    scope = resolve_scope(user, body.get("scope"), False, mode, body.get("date_from"), body.get("date_to"))
+    rating = get_rating_rows(scope, user["id"]) if mode == "onslaught" else None
+    facts = build_period_facts(get_period_rows(scope, viewer_id=user["id"]), get_recorder_names(user["id"]),
+                               mode, scope.date_from, scope.date_to, rating_rows=rating)
+    if facts["battles"] < config.EXPLAIN_MIN_BATTLES:
+        raise HTTPException(400, f"Для разбора нужно хотя бы {config.EXPLAIN_MIN_BATTLES} боёв в выбранном периоде")
+
+    key = hashlib.sha256(json.dumps(
+        {"prompt": PROMPT_VERSION, "model": config.EXPLAIN_MODEL, "mode": mode, "facts": facts},
+        ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    stored = get_explanation(key)
+    if stored:
+        return {"answer": stored["answer"], "cached": True, "battles": facts["battles"],
+                "created_at": stored["created_at"]}
+    with _explain_lock:
+        if user["id"] in _explaining:
+            raise HTTPException(429, "Разбор уже готовится, дождись его")
+        if not user.get("is_admin") and _explain_used(user) >= config.EXPLAIN_DAILY_LIMIT:
+            raise HTTPException(429, f"На сегодня разборы закончились: {config.EXPLAIN_DAILY_LIMIT} в сутки")
+        if count_explanations(None) >= config.EXPLAIN_GLOBAL_DAILY_LIMIT:
+            raise HTTPException(429, "Разборы на сегодня временно закончились, попробуй завтра")
+        _explaining.add(user["id"])
+        try:
+            booking = start_explanation(user["id"], key, mode, config.EXPLAIN_MODEL)
+        except Exception:
+            _explaining.discard(user["id"])
+            raise
+    try:
+        result = explain(facts, mode)
+    except ExplainError as e:
+        finish_explanation(booking, "failed")
+        raise HTTPException(502, str(e))
+    except Exception:
+        finish_explanation(booking, "failed")
+        traceback.print_exc()
+        raise HTTPException(500, "Внутренняя ошибка сервера")
+    finally:
+        with _explain_lock:
+            _explaining.discard(user["id"])
+    finish_explanation(booking, "ok", result["answer"], result["problems"], result["model"], result["usage"])
+    return {"answer": result["answer"], "cached": False, "battles": facts["battles"]}
 
 
 # --- Teams ---

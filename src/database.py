@@ -98,6 +98,23 @@ CREATE TABLE IF NOT EXISTS schema_flags (
     done_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- AI analyses. cache_key hashes the facts, the prompt version and the model, so the same
+-- period asked twice is answered from here; failed attempts are kept for the daily limit.
+CREATE TABLE IF NOT EXISTS explanations (
+    id         SERIAL PRIMARY KEY,
+    cache_key  TEXT NOT NULL,
+    user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    mode       TEXT,
+    status     TEXT NOT NULL,
+    answer     JSONB,
+    problems   JSONB,
+    model      TEXT,
+    usage      JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_explanations_key  ON explanations(cache_key) WHERE status = 'ok';
+CREATE INDEX IF NOT EXISTS idx_explanations_user ON explanations(user_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_team_members_user   ON team_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_team_invites_team   ON team_invites(team_id);
 CREATE INDEX IF NOT EXISTS idx_player_stats_battle ON player_stats(battle_id);
@@ -789,6 +806,127 @@ def _wn8_by(scope, viewer_id: int | None, per_vehicle: bool, names: list[str] | 
         tallies.setdefault(key, Tally()).add(
             r["tank_id"], r["battles"], r["damage"], r["frags"], r["spotted"], r["defence"], r["wins"])
     return {key: t.score() for key, t in tallies.items()}
+
+
+def get_period_rows(scope=None, viewer_id: int | None = None) -> list[dict]:
+    """Every row of the recorder's side in the battles in scope, oldest first, for the facts
+    the language model is given (insights.py).
+
+    `focus` marks "our" players: the ones every other summary averages (_SQUAD_FOCUS, minus the
+    players this viewer hid). The rest of the side stays in as the baseline: the allies in the
+    very same battles."""
+    join, params = _scope_join(scope)
+    hidden, hidden_params = _hidden_filter(viewer_id)
+    sql = f"""
+        SELECT
+            b.id AS battle_id, b.date_time, b.result, b.map_name, b.mode,
+            NULLIF(b.details->>'duration', '')::numeric              AS duration,
+            ps.name, ps.vehicle,
+            ps.details->>'typeCompDescr'                             AS tank_id,
+            ps.damage_dealt, ps.assists, ps.frags, ps.blocked, ps.damage_received,
+            ps.survived, ps.shots, ps.hits, ps.piercings,
+            NULLIF(ps.details->>'spotted', '')::numeric              AS spotted,
+            NULLIF(ps.details->>'lifeTime', '')::numeric             AS lifetime,
+            NULLIF(ps.details->>'comp7PrestigePoints', '')::numeric  AS prestige,
+            COALESCE(NULLIF(ps.details->>'prebattleID', ''), '0')    AS platoon,
+            (TRUE {_SQUAD_FOCUS} {hidden})                           AS focus
+        FROM player_stats ps
+        JOIN battles b ON b.id = ps.battle_id
+        {join}
+        WHERE ps.team = b.player_team
+        ORDER BY b.date_time, b.id
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, [*hidden_params, *params])
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_rating_rows(scope, user_id: int) -> list[dict]:
+    """The user's own Onslaught standing after each battle in scope, oldest first. Only the
+    recorder's rating is in a replay, so this is per uploader, never for teammates."""
+    join, params = _scope_join(scope)
+    sql = f"""
+        SELECT b.id AS battle_id, b.date_time, b.result,
+               ub.recorder->>'playerName'                                   AS name,
+               NULLIF(ub.recorder->>'comp7Rating', '')::int                AS rating,
+               NULLIF(ub.recorder->>'comp7RatingDelta', '')::int           AS delta,
+               COALESCE((ub.recorder->>'comp7QualActive')::boolean, FALSE) AS qualifying
+        FROM battles b
+        {join}
+        JOIN user_battles ub ON ub.battle_id = b.id AND ub.user_id = %s
+        WHERE b.mode = 'onslaught'
+        ORDER BY b.date_time, b.id
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, [*params, user_id])
+            return [dict(r) for r in cur.fetchall()]
+
+
+def get_explanation(cache_key: str) -> dict | None:
+    """A stored answer for exactly these facts, prompt and model, if one exists."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT answer, problems, model, created_at FROM explanations"
+                " WHERE cache_key = %s AND status = 'ok' ORDER BY id DESC LIMIT 1",
+                (cache_key,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def start_explanation(user_id: int, cache_key: str, mode: str, model: str) -> int:
+    """Book an analysis before the model is called, so it counts against the limits at once."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO explanations (cache_key, user_id, mode, status, model)"
+                " VALUES (%s, %s, %s, 'pending', %s) RETURNING id",
+                (cache_key, user_id, mode, model),
+            )
+            return int(cur.fetchone()["id"])
+
+
+def finish_explanation(explanation_id: int, status: str, answer=None, problems=None,
+                       model: str | None = None, usage=None) -> None:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE explanations SET status = %s, answer = %s, problems = %s,"
+                " model = COALESCE(%s, model), usage = %s WHERE id = %s",
+                (status, _json_or_null(answer), _json_or_null(problems), model,
+                 _json_or_null(usage), explanation_id),
+            )
+
+
+def count_explanations(user_id: int | None, hours: int = 24) -> int:
+    """Analyses asked of the model in the last `hours` (cached answers are not asked again):
+    by this user, or by everyone when user_id is None. Failed and pending ones count too."""
+    who, params = ("user_id = %s AND ", [user_id]) if user_id is not None else ("", [])
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS n FROM explanations"
+                " WHERE " + who + "created_at > NOW() - make_interval(hours => %s)",
+                [*params, hours],
+            )
+            return int(cur.fetchone()["n"])
+
+
+def get_recorder_names(user_id: int) -> list[str]:
+    """Every in-game name this user's replays were recorded under, most used first: the
+    accounts of one person (a main and its alts), "you" in the facts."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT recorder->>'playerName' AS name FROM user_battles"
+                " WHERE user_id = %s AND recorder->>'playerName' IS NOT NULL"
+                " GROUP BY 1 ORDER BY COUNT(*) DESC, 1",
+                (user_id,),
+            )
+            return [r["name"] for r in cur.fetchall()]
 
 
 def get_player_summary(
