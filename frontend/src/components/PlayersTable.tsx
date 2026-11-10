@@ -1,25 +1,26 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { PlayerRow } from '../api';
-import { fmt, fmt1, fmtPct, fmtTime, pct, winColor } from '../format';
+import { fmt, fmt1, fmtPct, fmtTime, pct, winColor, WN8_HINT, wn8Color } from '../format';
 import { Panel, Segmented } from './ui';
 
-type SortKey = 'name' | 'battles' | 'winrate' | 'survival' | 'avg_damage' | 'avg_assists' | 'avg_blocked'
+type SortKey = 'name' | 'battles' | 'winrate' | 'wn8' | 'survival' | 'avg_damage' | 'avg_assists' | 'avg_blocked'
   | 'avg_received' | 'avg_frags' | 'avg_spotted' | 'avg_shots' | 'avg_hits' | 'avg_piercings' | 'accuracy'
-  | 'penetration' | 'avg_xp' | 'avg_lifetime';
+  | 'penetration' | 'avg_lifetime';
 
 /** Column: key, header, tooltip. Every number is an average per battle unless the tooltip says otherwise. */
 type Column = [SortKey, string, string?];
 
 const SURVIVAL: Column = ['survival', 'Выжил', 'Доля боёв, которые игрок пережил'];
+const WN8: Column = ['wn8', 'WN8', WN8_HINT];
 const ACCURACY: Column = ['accuracy', 'Точность', 'Попадания от всех выстрелов'];
 
 const BASE: Column[] = [
-  ['battles', 'Бои'], ['winrate', 'Победы'], ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'],
+  ['battles', 'Бои'], ['winrate', 'Победы'], WN8, ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'],
   ['avg_blocked', 'Блок'], ['avg_frags', 'Фраги'], ACCURACY,
   ['penetration', 'Пробитие', 'Пробития от всех попаданий'], SURVIVAL,
 ];
 const FULL: Column[] = [
-  ['battles', 'Бои'], ['winrate', 'Победы'], SURVIVAL,
+  ['battles', 'Бои'], ['winrate', 'Победы'], WN8, SURVIVAL,
   ['avg_lifetime', 'Жизнь', 'Среднее время жизни в бою, мин:сек'],
   ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'], ['avg_blocked', 'Блок'],
   ['avg_received', 'Получено', 'Средний полученный урон'],
@@ -30,7 +31,6 @@ const FULL: Column[] = [
   ['avg_piercings', 'Пробития', 'Среднее число пробитий за бой'],
   ACCURACY,
   ['penetration', '% пробитий', 'Пробития от всех попаданий'],
-  ['avg_xp', 'Опыт', 'Средний опыт за бой'],
 ];
 
 export function SortHead<K extends string>({ k, label, sort, onSort, align = 'text-right', title, className = '' }:
@@ -57,7 +57,7 @@ export function compare(av: unknown, bv: unknown, desc: boolean) {
   return desc ? -c : c;
 }
 
-/** Player averages. `detailed` shows every column (shooting, survival, spotting, XP); `onHide` adds a hide button. */
+/** Player averages. `detailed` shows every column (shooting, survival, spotting); `onHide` adds a hide button. */
 export function PlayersTable({ rows, total, minBattles, onMinBattles, detailed = false, onHide, limit = 12, title }:
   { rows: PlayerRow[]; total: number; minBattles: number; onMinBattles: (v: number) => void;
     detailed?: boolean; onHide?: (name: string) => void; limit?: number; title?: ReactNode }) {
@@ -148,6 +148,8 @@ function Cell({ k, r, maxDamage }: { k: SortKey; r: Enriched; maxDamage: number 
       return <td className={td}>{fmt1(r[k])}</td>;
     case 'accuracy': case 'penetration': case 'survival':
       return <td className={td}>{fmtPct(r[k])}</td>;
+    case 'wn8':
+      return <td className={`${td} font-semibold`} style={{ color: wn8Color(r.wn8) }}>{fmt(r.wn8)}</td>;
     case 'avg_lifetime': return <td className={td}>{fmtTime(r.avg_lifetime)}</td>;
     case 'battles': return <td className={td}>{fmt(r.battles)}</td>;
     default: return <td className={td}>{fmt(r[k as 'avg_assists'])}</td>;

@@ -19,6 +19,9 @@
   --color-win: #4fbf84;
   --color-loss: #e0605a;
   --color-draw: #c9a85e;
+  /* The upper steps of the WN8 scale; the lower ones reuse loss / draw / win. */
+  --color-wn-great: #4aa3c7;
+  --color-wn-unicum: #a877d6;
 
   --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;

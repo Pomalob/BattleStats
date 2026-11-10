@@ -13,6 +13,7 @@ import os
 import pytest
 
 import database as db_module
+import wn8
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
@@ -63,6 +64,7 @@ def make_battle(battle_hash, map_name, result, winner_team, players, date_time="
                 "frags": p.get("frags", 0), "xp": p.get("xp", 0),
                 "survived": p.get("survived", True), "shots": p.get("shots", 0),
                 "hits": p.get("hits", 0), "piercings": p.get("piercings", 0),
+                "details": p.get("details"),
             }
             for p in players
         ],
@@ -214,6 +216,27 @@ def test_player_summary_averages_only_the_players_own_team(db, seeded):
     assert float(p1["accuracy"]) == 75.0 and float(p1["penetration"]) == 66.7
     assert float(p1["survival"]) == 100.0
     assert p1["avg_spotted"] is None, "battles saved without details have no spotting data"
+
+
+def test_wn8_is_missing_without_tank_ids_and_counted_with_them(db, seeded):
+    assert db.get_player_summary()[0]["wn8"] is None, "battles saved without details carry no tank id"
+
+    tank_id, exp = next(iter(wn8.expected().items()))
+    alice = seeded["alice"]
+    # Exactly the expected damage, frags, spotting and defence on a known tank, in a won battle.
+    db.save_battle(make_battle("h-wn8", "Прохоровка", "win", 1, [
+        {"name": "Avg", "damage": round(exp["expDamage"]), "frags": 1, "vehicle": "Known",
+         "details": {"typeCompDescr": tank_id, "spotted": 1, "droppedCapturePoints": 1}},
+        {"name": "Odd", "damage": 5000, "vehicle": "Unknown", "details": {"typeCompDescr": 999999999}},
+    ]), user_id=alice)
+
+    rows = {r["name"]: r for r in db.get_player_summary()}
+    tally = wn8.Tally()
+    tally.add(tank_id, 1, round(exp["expDamage"]), 1, 1, 1, 1)
+    assert rows["Avg"]["wn8"] == tally.score() and rows["Avg"]["wn8"] > 0
+    assert rows["Odd"]["wn8"] is None, "a tank missing from the table gives no score rather than zero"
+    tanks = {(r["name"], r["vehicle"]): r["wn8"] for r in db.get_vehicle_summary()}
+    assert tanks[("Avg", "Known")] == rows["Avg"]["wn8"]
 
 
 def test_player_summary_is_sorted_by_average_damage(db, seeded):

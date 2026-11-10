@@ -10,6 +10,7 @@ from psycopg2.pool import ThreadedConnectionPool
 
 from config import ADMIN_USER_IDS, DATABASE_URL, DB_POOL_MAX, DB_POOL_MIN
 from replay_parser import SQUAD_MODES, battle_mode
+from wn8 import Tally
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -749,6 +750,47 @@ def count_players(scope=None, viewer_id: int | None = None) -> int:
             return int(cur.fetchone()["n"])
 
 
+def _wn8_by(scope, viewer_id: int | None, per_vehicle: bool, names: list[str] | None = None) -> dict:
+    """WN8 per player (or per player and tank) over the same rows the summaries average.
+
+    The totals are grouped by tank here and folded in Python, because the expected values
+    live in a file (wn8.py), not in the database."""
+    join, params = _scope_join(scope)
+    hidden, hidden_params = _hidden_filter(viewer_id)
+    name_filter, name_params = ("AND ps.name = ANY(%s)", [list(names)]) if names is not None else ("", [])
+    sql = f"""
+        SELECT
+            ps.name,
+            ps.vehicle,
+            ps.details->>'typeCompDescr'                                        AS tank_id,
+            COUNT(*)                                                            AS battles,
+            SUM(ps.damage_dealt)                                                AS damage,
+            SUM(ps.frags)                                                       AS frags,
+            SUM(NULLIF(ps.details->>'spotted', '')::numeric)                    AS spotted,
+            SUM(NULLIF(ps.details->>'droppedCapturePoints', '')::numeric)       AS defence,
+            SUM(CASE WHEN b.result = 'win' THEN 1 ELSE 0 END)                   AS wins
+        FROM player_stats ps
+        JOIN battles b ON b.id = ps.battle_id
+        {join}
+        WHERE ps.team = b.player_team
+          AND ps.details->>'typeCompDescr' ~ '^[0-9]+$'
+        {_SQUAD_FOCUS}
+        {hidden}
+        {name_filter}
+        GROUP BY ps.name, ps.vehicle, ps.details->>'typeCompDescr'
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, [*params, *hidden_params, *name_params])
+            rows = cur.fetchall()
+    tallies: dict = {}
+    for r in rows:
+        key = (r["name"], r["vehicle"]) if per_vehicle else r["name"]
+        tallies.setdefault(key, Tally()).add(
+            r["tank_id"], r["battles"], r["damage"], r["frags"], r["spotted"], r["defence"], r["wins"])
+    return {key: t.score() for key, t in tallies.items()}
+
+
 def get_player_summary(
     scope=None,
     viewer_id: int | None = None,
@@ -797,7 +839,11 @@ def get_player_summary(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, [*params, *hidden_params, max(1, min_battles)])
-            return [dict(r) for r in cur.fetchall()]
+            players = [dict(r) for r in cur.fetchall()]
+    scores = _wn8_by(scope, viewer_id, per_vehicle=False) if players else {}
+    for p in players:
+        p["wn8"] = scores.get(p["name"])
+    return players
 
 
 def get_daily_summary(scope=None, viewer_id: int | None = None) -> dict:
@@ -895,7 +941,11 @@ def get_vehicle_summary(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, [*params, *hidden_params, *name_params])
-            return [dict(r) for r in cur.fetchall()]
+            vehicles = [dict(r) for r in cur.fetchall()]
+    scores = _wn8_by(scope, viewer_id, per_vehicle=True, names=names) if vehicles else {}
+    for v in vehicles:
+        v["wn8"] = scores.get((v["name"], v["vehicle"]))
+    return vehicles
 
 
 # --- Teams ---

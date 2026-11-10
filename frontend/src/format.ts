@@ -26,3 +26,14 @@ export function winColor(rate: number | null) {
 /** Seconds as m:ss — how long a player stayed alive. */
 export const fmtTime = (sec: number | null | undefined) =>
   sec == null || Number.isNaN(sec) ? '—' : `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
+
+/** The usual WN8 colour steps, folded into five. */
+export function wn8Color(v: number | null | undefined) {
+  if (v == null) return 'var(--color-dim)';
+  if (v < 650) return 'var(--color-loss)';
+  if (v < 1200) return 'var(--color-draw)';
+  if (v < 1600) return 'var(--color-win)';
+  if (v < 2450) return 'var(--color-wn-great)';
+  return 'var(--color-wn-unicum)';
+}
+export const WN8_HINT = 'WN8 по нормам XVM для случайных боёв. В клановых боях и «Натиске» годится для сравнения игроков между собой, а не с профилем.';

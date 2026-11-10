@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, AuthError, filterQuery, send, type BattleListRow } from '../../api';
 import { compare, PlayersTable, SortHead, useSort } from '../../components/PlayersTable';
 import { Panel, Skeleton } from '../../components/ui';
-import { fmt, fmt1, fmtPct, pct, plural, winColor } from '../../format';
+import { fmt, fmt1, fmtPct, pct, plural, winColor, WN8_HINT, wn8Color } from '../../format';
 import { useAnalytics } from './Layout';
 import { Empty } from './Overview';
 
@@ -71,7 +71,7 @@ export function PlayersTab() {
 
 /* --- tanks: a player on each tank, the same players as the table above --- */
 
-type TankKey = 'name' | 'vehicle' | 'battles' | 'winrate' | 'survival' | 'avg_damage' | 'avg_assists' | 'avg_blocked'
+type TankKey = 'name' | 'vehicle' | 'battles' | 'winrate' | 'wn8' | 'survival' | 'avg_damage' | 'avg_assists' | 'avg_blocked'
   | 'avg_frags' | 'avg_shots' | 'accuracy' | 'penetration';
 
 export function TanksTab() {
@@ -86,7 +86,7 @@ export function TanksTab() {
   if (!summary.totals.total_battles) return <Empty days={filters.days} />;
   const heads: [TankKey, string, string?][] = [
     ['name', 'Игрок', 'text-left'], ['vehicle', 'Танк', 'text-left'], ['battles', 'Бои'], ['winrate', 'Победы'],
-    ['survival', 'Выжил'], ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'], ['avg_blocked', 'Блок'], ['avg_frags', 'Фраги'],
+    ['wn8', 'WN8'], ['survival', 'Выжил'], ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'], ['avg_blocked', 'Блок'], ['avg_frags', 'Фраги'],
     ['avg_shots', 'Выстрелы'], ['accuracy', 'Точность'], ['penetration', 'Пробитие'],
   ];
   return (
@@ -96,7 +96,7 @@ export function TanksTab() {
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[1100px] border-collapse text-[13.5px]">
           <thead><tr className={thead}>
-            {heads.map(([k, l, a]) => <SortHead key={k} k={k} label={l} align={a} sort={sort} onSort={onSort} />)}
+            {heads.map(([k, l, a]) => <SortHead key={k} k={k} label={l} align={a} title={k === 'wn8' ? WN8_HINT : undefined} sort={sort} onSort={onSort} />)}
           </tr></thead>
           <tbody>
             {rows.map(v => (
@@ -105,6 +105,7 @@ export function TanksTab() {
                 <td className="px-3 py-2.5 text-muted">{v.vehicle}</td>
                 <td className="num px-3 py-2.5 text-right">{fmt(v.battles)}</td>
                 <td className="px-3 py-2.5"><WinBar rate={v.winrate} /></td>
+                <td className="num px-3 py-2.5 text-right font-semibold" style={{ color: wn8Color(v.wn8) }}>{fmt(v.wn8)}</td>
                 <td className="num px-3 py-2.5 text-right">{fmtPct(v.survival)}</td>
                 <td className="num px-3 py-2.5 text-right">{fmt(v.avg_damage)}</td>
                 <td className="num px-3 py-2.5 text-right">{fmt(v.avg_assists)}</td>

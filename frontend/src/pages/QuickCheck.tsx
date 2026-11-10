@@ -10,7 +10,7 @@ import { load, save } from '../storage';
 interface ParsedPlayer {
   name: string; vehicle: string; team: number; damage_dealt: number; damage_received: number;
   blocked: number; assists: number; frags: number; shots: number; hits: number; piercings: number;
-  xp: number; survived: boolean;
+  survived: boolean;
   details?: { prebattleID?: number } | null;
 }
 interface ParsedBattle {
@@ -54,14 +54,14 @@ function ourPlayers(b: ParsedBattle): ParsedPlayer[] {
   return side.filter(p => p === me || (platoon && p.details?.prebattleID === platoon));
 }
 
-type Metric = 'damage' | 'assists' | 'blocked' | 'received' | 'frags' | 'shots' | 'accuracy' | 'penetration' | 'survived' | 'xp';
+type Metric = 'damage' | 'assists' | 'blocked' | 'received' | 'frags' | 'shots' | 'accuracy' | 'penetration' | 'survived';
 const METRICS: [Metric, string][] = [
   ['damage', 'Урон'], ['assists', 'Ассист'], ['blocked', 'Блок'], ['received', 'Получено'], ['frags', 'Фраги'],
-  ['shots', 'Выстрелы'], ['accuracy', 'Точность'], ['penetration', 'Пробитие'], ['survived', 'Выжил'], ['xp', 'Опыт'],
+  ['shots', 'Выстрелы'], ['accuracy', 'Точность'], ['penetration', 'Пробитие'], ['survived', 'Выжил'],
 ];
 const value = (p: ParsedPlayer, m: Metric): number => ({
   damage: p.damage_dealt, assists: p.assists, blocked: p.blocked, received: p.damage_received, frags: p.frags,
-  shots: p.shots, xp: p.xp, survived: p.survived ? 100 : 0,
+  shots: p.shots, survived: p.survived ? 100 : 0,
   accuracy: p.shots ? (p.hits / p.shots) * 100 : 0,
   penetration: p.hits ? (p.piercings / p.hits) * 100 : 0,
 })[m];
