@@ -290,8 +290,14 @@ class FakeDB:
         return len(self.explanations) - 1
 
     def finish_explanation(self, explanation_id, status, answer=None, problems=None, model=None,
-                           usage=None):
-        self.explanations[explanation_id].update(status=status, answer=answer, problems=problems)
+                           usage=None, error_kind=None, error=None, duration_ms=None):
+        self.explanations[explanation_id].update(status=status, answer=answer, problems=problems,
+                                                 usage=usage, error_kind=error_kind, error=error,
+                                                 duration_ms=duration_ms)
+
+    def get_explanation_log(self, limit=100):
+        recent = [{"id": i, **e} for i, e in enumerate(self.explanations)][::-1][:limit]
+        return {"recent": recent, "by_day": [], "errors_7d": []}
 
     def count_explanations(self, user_id, hours=24):
         return sum(1 for e in self.explanations if user_id is None or e["user_id"] == user_id)
@@ -398,7 +404,7 @@ def fake_db(monkeypatch):
         "get_team_members", "rename_team", "delete_team", "remove_member", "create_invite",
         "list_invites", "revoke_invite", "get_invite", "accept_invite", "get_admin_overview",
         "get_period_rows", "get_rating_rows", "get_recorder_names", "get_explanation",
-        "start_explanation", "finish_explanation", "count_explanations",
+        "start_explanation", "finish_explanation", "count_explanations", "get_explanation_log",
     ):
         monkeypatch.setattr(app_module, name, getattr(db, name))
     for limiter in (app_module._login_failures, app_module._registrations, app_module._uploaded_files):

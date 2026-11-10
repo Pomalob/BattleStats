@@ -77,12 +77,12 @@ def test_the_daily_limit_counts_new_analyses_and_failures(client, auth, fake_db,
     _seed(fake_db, _user_id(fake_db))
 
     def fail(facts, mode):
-        raise explainer.ExplainError("Разбор временно недоступен")
+        raise explainer.ExplainError("provider")
     monkeypatch.setattr(app_module, "explain", fail)
     for last_day in ("2026-11-08", "2026-11-09"):
         res = client.post("/api/analytics/explain", headers=headers, json={
             "mode": "clan", "scope": "mine", "date_from": "2026-11-01", "date_to": last_day})
-        assert res.status_code == 502 and "недоступен" in res.json()["detail"]
+        assert res.status_code == 502 and res.json()["detail"] == explainer.MESSAGES["provider"]
     res = client.post("/api/analytics/explain", json={"mode": "clan", "scope": "mine"}, headers=headers)
     assert res.status_code == 429, "two failed attempts used up the limit of two"
 
@@ -138,8 +138,9 @@ def test_still_broken_or_refused_is_an_error(monkeypatch):
     with pytest.raises(explainer.ExplainError):
         explainer.explain(FACTS, "standard")
     _fake_client(monkeypatch, [_response("", stop="refusal")])
-    with pytest.raises(explainer.ExplainError, match="отказалась"):
+    with pytest.raises(explainer.ExplainError) as refused:
         explainer.explain(FACTS, "standard")
+    assert refused.value.kind == "refusal" and str(refused.value) == explainer.UNAVAILABLE
 
 
 def test_it_needs_the_current_consent(client, auth, fake_db, enabled, fake_explain):
@@ -166,3 +167,68 @@ def test_a_second_request_in_flight_and_the_site_wide_cap_are_refused(client, au
     res = client.post("/api/analytics/explain", json={"mode": "clan", "scope": "mine"}, headers=headers)
     assert res.status_code == 429 and "завтра" in res.json()["detail"]
     assert not fake_explain and not app_module._explaining
+
+
+# --- causes of failure ---
+
+def _status_error(status, body):
+    import anthropic
+    import httpx2
+    response = httpx2.Response(status, json=body, request=httpx2.Request("POST", "https://gptunnel.ru/v1/messages"),
+                               headers={"request-id": "req_1"})
+    return anthropic.APIStatusError("error", response=response, body=body)
+
+
+@pytest.mark.parametrize("status, body, kind", [
+    (402, {"error": {"type": "payment_required", "message": "Payment required"}}, "payment"),
+    (403, {"error": {"type": "permission_error", "message": "Insufficient balance"}}, "payment"),
+    (400, {"code": 19, "message": "Недостаточно средств на балансе"}, "payment"),
+    (401, {"error": {"type": "unauthorized_request_error", "message": "API key expired", "code": "api_key_expired"}}, "auth"),
+    (403, {"error": {"type": "permission_error", "message": "Model 'claude-x' is not allowed for this API key."}}, "model"),
+    (404, {"error": {"type": "not_found_error", "message": "not found"}}, "model"),
+    (429, {"error": {"type": "rate_limit_error", "message": "slow down"}}, "rate_limit"),
+    (503, {"error": {"type": "overloaded_error", "message": "busy"}}, "provider"),
+])
+def test_provider_errors_name_their_cause(status, body, kind):
+    error = explainer.classify(_status_error(status, body))
+    assert error.kind == kind
+    assert error.detail["status"] == status and error.detail["request_id"] == "req_1"
+    assert error.detail["message"] and str(error) == explainer.UNAVAILABLE, "users never see the cause"
+
+
+def test_a_failure_is_logged_with_its_cause_and_admins_see_the_details(client, auth, fake_db, enabled,
+                                                                       monkeypatch):
+    import app as app_module
+    headers = auth()
+    uid = _user_id(fake_db)
+    _seed(fake_db, uid)
+
+    def unpaid(facts, mode):
+        raise explainer.classify(_status_error(402, {"error": {"message": "Insufficient balance"}}))
+    monkeypatch.setattr(app_module, "explain", unpaid)
+    res = client.post("/api/analytics/explain", json={"mode": "clan", "scope": "mine"}, headers=headers)
+    assert res.status_code == 502 and res.json()["detail"] == explainer.UNAVAILABLE
+    logged = fake_db.explanations[-1]
+    assert (logged["status"], logged["error_kind"]) == ("failed", "payment")
+    assert logged["error"]["message"] == "Insufficient balance" and logged["duration_ms"] is not None
+
+    assert client.get("/api/admin/explanations", headers=headers).status_code == 403
+    monkeypatch.setattr(config, "ADMIN_USER_IDS", frozenset({uid}))
+    res = client.post("/api/analytics/explain", json={"mode": "clan", "scope": "mine"}, headers=headers)
+    detail = res.json()["detail"]
+    assert "Insufficient balance" in detail and explainer.KINDS["payment"] in detail, "the admin sees the cause"
+    log = client.get("/api/admin/explanations", headers=headers).json()
+    assert log["settings"]["model"] == config.EXPLAIN_MODEL and log["recent"][0]["error_kind"] == "payment"
+    monkeypatch.setattr(config, "EXPLAIN_API_KEY", "secret-key-value")
+    assert "secret-key-value" not in client.get("/api/admin/explanations", headers=headers).text
+
+
+def test_the_admin_check_reports_the_cause(client, auth, fake_db, enabled, monkeypatch):
+    headers = auth()
+    monkeypatch.setattr(config, "ADMIN_USER_IDS", frozenset({_user_id(fake_db)}))
+    monkeypatch.setattr(explainer, "ping", lambda: (_ for _ in ()).throw(
+        explainer.classify(_status_error(402, {"error": {"message": "Payment required"}}))))
+    res = client.post("/api/admin/explanations/check", headers=headers).json()
+    assert (res["ok"], res["kind"]) == (False, "payment") and res["detail"]["status"] == 402
+    monkeypatch.setattr(explainer, "ping", lambda: {"ok": True, "model": "m", "reply": "работает", "usage": {}})
+    assert client.post("/api/admin/explanations/check", headers=headers).json()["ok"] is True

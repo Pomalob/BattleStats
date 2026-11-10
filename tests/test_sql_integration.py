@@ -613,3 +613,15 @@ def test_explanations_are_cached_by_key_and_counted_per_user(db):
     assert db.get_explanation("k1")["answer"] == {"summary": "Итог"}
     db.delete_user(alice)
     assert db.get_explanation("k1") is None, "deleting the account deletes its analyses"
+
+
+def test_the_explanation_log_keeps_the_cause_of_a_failure(db):
+    alice = db.create_user("alice", "hash")["id"]
+    booking = db.start_explanation(alice, "k1", "clan", "m")
+    db.finish_explanation(booking, "failed", usage={"input_tokens": 7}, error_kind="payment",
+                          error={"status": 402, "message": "Insufficient balance"}, duration_ms=120)
+    log = db.get_explanation_log()
+    row = log["recent"][0]
+    assert (row["username"], row["error_kind"], row["error"]["status"], row["duration_ms"]) == ("alice", "payment", 402, 120)
+    assert log["by_day"][0]["failed"] == 1 and int(log["by_day"][0]["input_tokens"]) == 7
+    assert log["errors_7d"][0]["error_kind"] == "payment"

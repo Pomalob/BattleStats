@@ -110,6 +110,9 @@ CREATE TABLE IF NOT EXISTS explanations (
     problems   JSONB,
     model      TEXT,
     usage      JSONB,
+    error_kind TEXT,
+    error      JSONB,
+    duration_ms INTEGER,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_explanations_key  ON explanations(cache_key) WHERE status = 'ok';
@@ -256,6 +259,9 @@ def init_db():
         _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0")
         _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_version TEXT")
         _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_at TIMESTAMPTZ")
+        _run_migration(conn, "ALTER TABLE explanations ADD COLUMN IF NOT EXISTS error_kind TEXT")
+        _run_migration(conn, "ALTER TABLE explanations ADD COLUMN IF NOT EXISTS error JSONB")
+        _run_migration(conn, "ALTER TABLE explanations ADD COLUMN IF NOT EXISTS duration_ms INTEGER")
 
 
 def _run_migration(conn, sql: str):
@@ -890,15 +896,52 @@ def start_explanation(user_id: int, cache_key: str, mode: str, model: str) -> in
 
 
 def finish_explanation(explanation_id: int, status: str, answer=None, problems=None,
-                       model: str | None = None, usage=None) -> None:
+                       model: str | None = None, usage=None, error_kind: str | None = None,
+                       error=None, duration_ms: int | None = None) -> None:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE explanations SET status = %s, answer = %s, problems = %s,"
-                " model = COALESCE(%s, model), usage = %s WHERE id = %s",
+                " model = COALESCE(%s, model), usage = %s, error_kind = %s, error = %s,"
+                " duration_ms = %s WHERE id = %s",
                 (status, _json_or_null(answer), _json_or_null(problems), model,
-                 _json_or_null(usage), explanation_id),
+                 _json_or_null(usage), error_kind, _json_or_null(error), duration_ms, explanation_id),
             )
+
+
+def get_explanation_log(limit: int = 100) -> dict:
+    """The admin page's view of the AI analysis: the latest attempts with their causes of
+    failure, and per-day totals (statuses, error kinds, tokens) for the last 30 days."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT e.id, e.created_at, u.username, e.mode, e.status, e.error_kind, e.error,"
+                "       e.problems, e.model, e.usage, e.duration_ms"
+                " FROM explanations e LEFT JOIN users u ON u.id = e.user_id"
+                " ORDER BY e.id DESC LIMIT %s",
+                (limit,),
+            )
+            recent = [dict(r) for r in cur.fetchall()]
+            cur.execute("""
+                SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
+                       COUNT(*) FILTER (WHERE status = 'ok')      AS ok,
+                       COUNT(*) FILTER (WHERE status = 'failed')  AS failed,
+                       COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                       COALESCE(SUM((usage->>'input_tokens')::numeric), 0)  AS input_tokens,
+                       COALESCE(SUM((usage->>'output_tokens')::numeric), 0) AS output_tokens,
+                       COALESCE(SUM((usage->>'cache_read_input_tokens')::numeric), 0) AS cache_read_tokens
+                FROM explanations
+                WHERE created_at > NOW() - INTERVAL '30 days'
+                GROUP BY 1 ORDER BY 1 DESC
+            """)
+            by_day = [dict(r) for r in cur.fetchall()]
+            cur.execute(
+                "SELECT error_kind, COUNT(*) AS n, MAX(created_at) AS last_at FROM explanations"
+                " WHERE status = 'failed' AND created_at > NOW() - INTERVAL '7 days'"
+                " GROUP BY 1 ORDER BY 2 DESC"
+            )
+            by_kind = [dict(r) for r in cur.fetchall()]
+    return {"recent": recent, "by_day": by_day, "errors_7d": by_kind}
 
 
 def count_explanations(user_id: int | None, hours: int = 24) -> int:

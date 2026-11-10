@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import config
 import database
 import tickets
+import explainer
 from explainer import ExplainError, explain
 from insights import PROMPT_VERSION, build_period_facts
 from auth import create_token, decode_token, hash_password, verify_password
@@ -29,7 +30,7 @@ from database import (
     get_user_teams, get_vehicle_summary, hide_player, init_db, list_invites, remove_member, rename_team,
     revoke_invite, save_battle, unhide_player, get_daily_summary, get_user_auth, set_password, bump_token_version,
     record_consent, delete_user, get_period_rows, get_rating_rows, get_recorder_names, get_explanation,
-    start_explanation, finish_explanation, count_explanations,
+    start_explanation, finish_explanation, count_explanations, get_explanation_log,
 )
 from replay_parser import (
     BATTLE_COMMON_FIELDS, BATTLE_META_FIELDS, PLAYER_ACCOUNT_FIELDS, PLAYER_RESULT_FIELDS,
@@ -735,19 +736,30 @@ def analytics_explain(body: dict = Depends(json_body), user: dict = Depends(requ
         except Exception:
             _explaining.discard(user["id"])
             raise
+    started = time.monotonic()
+    elapsed = lambda: int((time.monotonic() - started) * 1000)  # noqa: E731
     try:
         result = explain(facts, mode)
     except ExplainError as e:
-        finish_explanation(booking, "failed")
+        detail = {k: v for k, v in e.detail.items() if k != "usage"}
+        finish_explanation(booking, "failed", problems=detail.pop("problems", None),
+                           usage=e.detail.get("usage"), error_kind=e.kind, error=detail,
+                           duration_ms=elapsed())
+        # The admin sees the provider's own words right away; everyone else, the named cause.
+        if user.get("is_admin"):  # the admin gets the cause right away; everyone else, no internals
+            raise HTTPException(502, f"{explainer.KINDS.get(e.kind, e.kind)}: {json.dumps(detail, ensure_ascii=False)}")
         raise HTTPException(502, str(e))
-    except Exception:
-        finish_explanation(booking, "failed")
+    except Exception as e:
+        finish_explanation(booking, "failed", error_kind="internal",
+                           error={"error": type(e).__name__, "message": str(e)[:300]},
+                           duration_ms=elapsed())
         traceback.print_exc()
         raise HTTPException(500, "Внутренняя ошибка сервера")
     finally:
         with _explain_lock:
             _explaining.discard(user["id"])
-    finish_explanation(booking, "ok", result["answer"], result["problems"], result["model"], result["usage"])
+    finish_explanation(booking, "ok", result["answer"], result["problems"], result["model"],
+                       result["usage"], duration_ms=elapsed())
     return {"answer": result["answer"], "cached": False, "battles": facts["battles"]}
 
 
@@ -897,6 +909,36 @@ def require_admin(user: dict = Depends(require_user)) -> dict:
 def admin_overview(user: dict = Depends(require_admin)):
     require_db()
     return get_admin_overview()
+
+
+@app.get("/api/admin/explanations")
+def admin_explanations(limit: int = 100, user: dict = Depends(require_admin)):
+    """The AI analysis log: settings, per-day totals, causes of failure, the latest attempts."""
+    require_db()
+    log = get_explanation_log(min(max(limit, 1), 500))
+    return {
+        "settings": {"enabled": config.EXPLAIN_ENABLED, "model": config.EXPLAIN_MODEL,
+                     "base_url": config.EXPLAIN_BASE_URL, "daily_limit": config.EXPLAIN_DAILY_LIMIT,
+                     "global_daily_limit": config.EXPLAIN_GLOBAL_DAILY_LIMIT,
+                     "timeout_seconds": config.EXPLAIN_TIMEOUT_SECONDS},
+        "messages": explainer.MESSAGES,
+        "kinds": explainer.KINDS,
+        **log,
+    }
+
+
+@app.post("/api/admin/explanations/check")
+def admin_check_explainer(user: dict = Depends(require_admin)):
+    """A tiny request to the provider: does the key, the balance and the model work right now."""
+    if not config.EXPLAIN_ENABLED:
+        return {"ok": False, "kind": "disabled", "message": "Ключ GPTUNNEL_API_KEY не задан"}
+    started = time.monotonic()
+    try:
+        result = explainer.ping()
+    except ExplainError as e:
+        return {"ok": False, "kind": e.kind, "message": explainer.KINDS.get(e.kind, e.kind), "detail": e.detail,
+                "duration_ms": int((time.monotonic() - started) * 1000)}
+    return {**result, "duration_ms": int((time.monotonic() - started) * 1000)}
 
 
 # --- The site itself ---
