@@ -71,7 +71,8 @@ export function PlayersTab() {
 
 /* --- tanks: a player on each tank, the same players as the table above --- */
 
-type TankKey = 'name' | 'vehicle' | 'battles' | 'winrate' | 'avg_damage' | 'avg_assists' | 'avg_frags';
+type TankKey = 'name' | 'vehicle' | 'battles' | 'winrate' | 'survival' | 'avg_damage' | 'avg_assists' | 'avg_blocked'
+  | 'avg_frags' | 'avg_shots' | 'accuracy' | 'penetration';
 
 export function TanksTab() {
   const { summary, filters } = useAnalytics();
@@ -85,14 +86,15 @@ export function TanksTab() {
   if (!summary.totals.total_battles) return <Empty days={filters.days} />;
   const heads: [TankKey, string, string?][] = [
     ['name', 'Игрок', 'text-left'], ['vehicle', 'Танк', 'text-left'], ['battles', 'Бои'], ['winrate', 'Победы'],
-    ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'], ['avg_frags', 'Фраги'],
+    ['survival', 'Выжил'], ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'], ['avg_blocked', 'Блок'], ['avg_frags', 'Фраги'],
+    ['avg_shots', 'Выстрелы'], ['accuracy', 'Точность'], ['penetration', 'Пробитие'],
   ];
   return (
     <Panel title={<>Игрок × танк <span className="ml-1 text-[13px] font-medium text-dim">{rows.length}</span></>}
       aside={<Search value={q} onChange={setQ} placeholder="Игрок или танк" />}>
       <p className="px-5 pt-1 text-[12px] text-dim">Те же игроки, что и в таблице игроков, с тем же порогом боёв.</p>
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[720px] border-collapse text-[13.5px]">
+        <table className="w-full min-w-[1100px] border-collapse text-[13.5px]">
           <thead><tr className={thead}>
             {heads.map(([k, l, a]) => <SortHead key={k} k={k} label={l} align={a} sort={sort} onSort={onSort} />)}
           </tr></thead>
@@ -103,12 +105,17 @@ export function TanksTab() {
                 <td className="px-3 py-2.5 text-muted">{v.vehicle}</td>
                 <td className="num px-3 py-2.5 text-right">{fmt(v.battles)}</td>
                 <td className="px-3 py-2.5"><WinBar rate={v.winrate} /></td>
+                <td className="num px-3 py-2.5 text-right">{fmtPct(v.survival)}</td>
                 <td className="num px-3 py-2.5 text-right">{fmt(v.avg_damage)}</td>
                 <td className="num px-3 py-2.5 text-right">{fmt(v.avg_assists)}</td>
+                <td className="num px-3 py-2.5 text-right">{fmt(v.avg_blocked)}</td>
                 <td className="num px-3 py-2.5 text-right">{fmt1(v.avg_frags)}</td>
+                <td className="num px-3 py-2.5 text-right">{fmt1(v.avg_shots)}</td>
+                <td className="num px-3 py-2.5 text-right">{fmtPct(v.accuracy)}</td>
+                <td className="num px-3 py-2.5 text-right">{fmtPct(v.penetration)}</td>
               </tr>
             ))}
-            {!rows.length && <tr><td colSpan={7} className="py-10 text-center text-muted">Ничего не нашлось</td></tr>}
+            {!rows.length && <tr><td colSpan={heads.length} className="py-10 text-center text-muted">Ничего не нашлось</td></tr>}
           </tbody>
         </table>
       </div>

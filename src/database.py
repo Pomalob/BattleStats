@@ -773,9 +773,17 @@ def get_player_summary(
             SUM(CASE WHEN b.result = 'draw' THEN 1 ELSE 0 END)               AS draws,
             ROUND(AVG(CASE WHEN b.result = 'win'  THEN ps.damage_dealt END)) AS avg_dmg_win,
             ROUND(AVG(CASE WHEN b.result = 'loss' THEN ps.damage_dealt END)) AS avg_dmg_loss,
-            ROUND(AVG(ps.shots))                                             AS avg_shots,
-            ROUND(AVG(ps.hits))                                              AS avg_hits,
-            ROUND(AVG(ps.piercings))                                         AS avg_piercings
+            ROUND(AVG(ps.shots)::numeric, 1)                                 AS avg_shots,
+            ROUND(AVG(ps.hits)::numeric, 1)                                  AS avg_hits,
+            ROUND(AVG(ps.piercings)::numeric, 1)                             AS avg_piercings,
+            -- Ratios of the totals, not of the rounded averages: 7.4 shots and 5.6 hits
+            -- would otherwise turn into 6 of 7.
+            ROUND(SUM(ps.hits)::numeric * 100 / NULLIF(SUM(ps.shots), 0), 1)     AS accuracy,
+            ROUND(SUM(ps.piercings)::numeric * 100 / NULLIF(SUM(ps.hits), 0), 1) AS penetration,
+            ROUND(AVG(ps.survived::int) * 100, 1)                            AS survival,
+            ROUND(AVG(ps.xp))                                                AS avg_xp,
+            ROUND(AVG(NULLIF(ps.details->>'spotted', '')::numeric), 1)       AS avg_spotted,
+            ROUND(AVG(NULLIF(ps.details->>'lifeTime', '')::numeric))         AS avg_lifetime
         FROM player_stats ps
         JOIN battles b ON b.id = ps.battle_id
         {join}
@@ -868,7 +876,12 @@ def get_vehicle_summary(
             ROUND(AVG(ps.assists))                              AS avg_assists,
             ROUND(AVG(ps.frags)::numeric, 1)                    AS avg_frags,
             SUM(CASE WHEN b.result = 'win'  THEN 1 ELSE 0 END)  AS wins,
-            SUM(CASE WHEN b.result = 'loss' THEN 1 ELSE 0 END)  AS losses
+            SUM(CASE WHEN b.result = 'loss' THEN 1 ELSE 0 END)  AS losses,
+            ROUND(AVG(ps.blocked))                              AS avg_blocked,
+            ROUND(AVG(ps.shots)::numeric, 1)                    AS avg_shots,
+            ROUND(SUM(ps.hits)::numeric * 100 / NULLIF(SUM(ps.shots), 0), 1)     AS accuracy,
+            ROUND(SUM(ps.piercings)::numeric * 100 / NULLIF(SUM(ps.hits), 0), 1) AS penetration,
+            ROUND(AVG(ps.survived::int) * 100, 1)               AS survival
         FROM player_stats ps
         JOIN battles b ON b.id = ps.battle_id
         {join}

@@ -210,6 +210,10 @@ def test_player_summary_averages_only_the_players_own_team(db, seeded):
     assert int(p1["avg_dmg_win"]) == 3000
     assert int(p1["avg_dmg_loss"]) == 1000
     assert int(p1["avg_shots"]) == 8 and int(p1["avg_hits"]) == 6 and int(p1["avg_piercings"]) == 4
+    # Ratios come from the totals: 18 hits of 24 shots, 12 piercings of 18 hits.
+    assert float(p1["accuracy"]) == 75.0 and float(p1["penetration"]) == 66.7
+    assert float(p1["survival"]) == 100.0
+    assert p1["avg_spotted"] is None, "battles saved without details have no spotting data"
 
 
 def test_player_summary_is_sorted_by_average_damage(db, seeded):

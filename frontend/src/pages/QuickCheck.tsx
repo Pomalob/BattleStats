@@ -10,6 +10,7 @@ import { load, save } from '../storage';
 interface ParsedPlayer {
   name: string; vehicle: string; team: number; damage_dealt: number; damage_received: number;
   blocked: number; assists: number; frags: number; shots: number; hits: number; piercings: number;
+  xp: number; survived: boolean;
   details?: { prebattleID?: number } | null;
 }
 interface ParsedBattle {
@@ -53,13 +54,24 @@ function ourPlayers(b: ParsedBattle): ParsedPlayer[] {
   return side.filter(p => p === me || (platoon && p.details?.prebattleID === platoon));
 }
 
-type Metric = 'damage' | 'assists' | 'blocked' | 'frags' | 'accuracy';
-const METRICS: [Metric, string][] = [['damage', 'Урон'], ['assists', 'Ассист'], ['blocked', 'Блок'], ['frags', 'Фраги'], ['accuracy', 'Точность']];
+type Metric = 'damage' | 'assists' | 'blocked' | 'received' | 'frags' | 'shots' | 'accuracy' | 'penetration' | 'survived' | 'xp';
+const METRICS: [Metric, string][] = [
+  ['damage', 'Урон'], ['assists', 'Ассист'], ['blocked', 'Блок'], ['received', 'Получено'], ['frags', 'Фраги'],
+  ['shots', 'Выстрелы'], ['accuracy', 'Точность'], ['penetration', 'Пробитие'], ['survived', 'Выжил'], ['xp', 'Опыт'],
+];
 const value = (p: ParsedPlayer, m: Metric): number => ({
-  damage: p.damage_dealt, assists: p.assists, blocked: p.blocked, frags: p.frags,
+  damage: p.damage_dealt, assists: p.assists, blocked: p.blocked, received: p.damage_received, frags: p.frags,
+  shots: p.shots, xp: p.xp, survived: p.survived ? 100 : 0,
   accuracy: p.shots ? (p.hits / p.shots) * 100 : 0,
+  penetration: p.hits ? (p.piercings / p.hits) * 100 : 0,
 })[m];
-const show = (v: number | null, m: Metric) => v == null ? '·' : m === 'frags' ? fmt1(v) : m === 'accuracy' ? `${Math.round(v)}%` : fmt(v);
+const PERCENT: Metric[] = ['accuracy', 'penetration', 'survived'];
+/** One battle's cell. */
+const show = (v: number | null, m: Metric) => v == null ? '·'
+  : m === 'survived' ? (v ? 'да' : 'нет') : PERCENT.includes(m) ? `${Math.round(v)}%` : fmt(v);
+/** The player's average over the battles they played. */
+const showAvg = (v: number, m: Metric) =>
+  PERCENT.includes(m) ? `${Math.round(v)}%` : m === 'frags' || m === 'shots' ? fmt1(v) : fmt(v);
 
 export function QuickCheck() {
   useTitle('Быстрый чек');
@@ -244,9 +256,11 @@ function Matrix({ battles }: { battles: ParsedBattle[] }) {
     }));
     return [...map.entries()].map(([name, cells]) => {
       const played = cells.filter(Boolean) as ParsedPlayer[];
-      const avg = metric === 'accuracy'
-        ? pct(played.reduce((s, p) => s + p.hits, 0), played.reduce((s, p) => s + p.shots, 0))
-        : played.reduce((s, p) => s + value(p, metric), 0) / played.length;
+      const sum = (f: (p: ParsedPlayer) => number) => played.reduce((s, p) => s + f(p), 0);
+      // Shooting ratios over the totals, so a one-shot battle does not weigh like a twenty-shot one.
+      const avg = metric === 'accuracy' ? pct(sum(p => p.hits), sum(p => p.shots))
+        : metric === 'penetration' ? pct(sum(p => p.piercings), sum(p => p.hits))
+        : sum(p => value(p, metric)) / played.length;
       return { name, cells, played: played.length, avg: avg ?? 0 };
     }).sort((a, b) => b.avg - a.avg);
   }, [battles, metric]);
@@ -287,7 +301,7 @@ function Matrix({ battles }: { battles: ParsedBattle[] }) {
                     </td>
                   );
                 })}
-                <td className="num sticky right-0 bg-surface px-3 py-2 text-right font-semibold">{show(r.avg, metric)}</td>
+                <td className="num sticky right-0 bg-surface px-3 py-2 text-right font-semibold">{showAvg(r.avg, metric)}</td>
               </tr>
             ))}
           </tbody>

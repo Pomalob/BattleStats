@@ -22,3 +22,7 @@ export function winColor(rate: number | null) {
   if (rate < 47) return 'var(--color-loss)';
   return 'var(--color-draw)';
 }
+
+/** Seconds as m:ss — how long a player stayed alive. */
+export const fmtTime = (sec: number | null | undefined) =>
+  sec == null || Number.isNaN(sec) ? '—' : `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;

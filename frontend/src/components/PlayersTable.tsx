@@ -1,21 +1,42 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { PlayerRow } from '../api';
-import { fmt, fmt1, pct, winColor } from '../format';
+import { fmt, fmt1, fmtPct, fmtTime, pct, winColor } from '../format';
 import { Panel, Segmented } from './ui';
 
-type SortKey = 'name' | 'battles' | 'winrate' | 'avg_damage' | 'avg_assists' | 'avg_blocked' | 'avg_received'
-  | 'avg_frags' | 'accuracy' | 'penetration';
+type SortKey = 'name' | 'battles' | 'winrate' | 'survival' | 'avg_damage' | 'avg_assists' | 'avg_blocked'
+  | 'avg_received' | 'avg_frags' | 'avg_spotted' | 'avg_shots' | 'avg_hits' | 'avg_piercings' | 'accuracy'
+  | 'penetration' | 'avg_xp' | 'avg_lifetime';
 
-const BASE: [SortKey, string][] = [
+/** Column: key, header, tooltip. Every number is an average per battle unless the tooltip says otherwise. */
+type Column = [SortKey, string, string?];
+
+const SURVIVAL: Column = ['survival', 'Выжил', 'Доля боёв, которые игрок пережил'];
+const ACCURACY: Column = ['accuracy', 'Точность', 'Попадания от всех выстрелов'];
+
+const BASE: Column[] = [
   ['battles', 'Бои'], ['winrate', 'Победы'], ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'],
-  ['avg_blocked', 'Блок'], ['avg_frags', 'Фраги'], ['accuracy', 'Точность'],
+  ['avg_blocked', 'Блок'], ['avg_frags', 'Фраги'], ACCURACY,
+  ['penetration', 'Пробитие', 'Пробития от всех попаданий'], SURVIVAL,
 ];
-const FULL: [SortKey, string][] = [...BASE.slice(0, 5), ['avg_received', 'Получено'], ...BASE.slice(5), ['penetration', 'Пробития']];
+const FULL: Column[] = [
+  ['battles', 'Бои'], ['winrate', 'Победы'], SURVIVAL,
+  ['avg_lifetime', 'Жизнь', 'Среднее время жизни в бою, мин:сек'],
+  ['avg_damage', 'Урон'], ['avg_assists', 'Ассист'], ['avg_blocked', 'Блок'],
+  ['avg_received', 'Получено', 'Средний полученный урон'],
+  ['avg_frags', 'Фраги'],
+  ['avg_spotted', 'Засвет', 'Сколько противников обнаружил за бой'],
+  ['avg_shots', 'Выстрелы', 'Среднее число выстрелов за бой'],
+  ['avg_hits', 'Попадания', 'Среднее число попаданий за бой'],
+  ['avg_piercings', 'Пробития', 'Среднее число пробитий за бой'],
+  ACCURACY,
+  ['penetration', '% пробитий', 'Пробития от всех попаданий'],
+  ['avg_xp', 'Опыт', 'Средний опыт за бой'],
+];
 
-export function SortHead<K extends string>({ k, label, sort, onSort, align = 'text-right' }:
-  { k: K; label: string; sort: { key: K; desc: boolean }; onSort: (k: K) => void; align?: string }) {
+export function SortHead<K extends string>({ k, label, sort, onSort, align = 'text-right', title, className = '' }:
+  { k: K; label: string; sort: { key: K; desc: boolean }; onSort: (k: K) => void; align?: string; title?: string; className?: string }) {
   return (
-    <th scope="col" className={`px-3 py-2.5 font-semibold ${align}`}
+    <th scope="col" className={`px-3 py-2.5 font-semibold ${align} ${className}`} title={title}
       aria-sort={sort.key === k ? (sort.desc ? 'descending' : 'ascending') : 'none'}>
       <button type="button" onClick={() => onSort(k)}
         className={`inline-flex items-center gap-1 whitespace-nowrap hover:text-ink ${sort.key === k ? 'text-ink' : ''}`}>
@@ -36,19 +57,14 @@ export function compare(av: unknown, bv: unknown, desc: boolean) {
   return desc ? -c : c;
 }
 
-/** Player averages. `detailed` adds received damage and penetration; `onHide` adds a hide button. */
+/** Player averages. `detailed` shows every column (shooting, survival, spotting, XP); `onHide` adds a hide button. */
 export function PlayersTable({ rows, total, minBattles, onMinBattles, detailed = false, onHide, limit = 12, title }:
   { rows: PlayerRow[]; total: number; minBattles: number; onMinBattles: (v: number) => void;
     detailed?: boolean; onHide?: (name: string) => void; limit?: number; title?: ReactNode }) {
   const { sort, onSort } = useSort<SortKey>('avg_damage');
   const [showAll, setShowAll] = useState(false);
   const columns = detailed ? FULL : BASE;
-  const enriched = useMemo(() => rows.map(r => ({
-    ...r,
-    winrate: pct(r.wins, r.battles) ?? 0,
-    accuracy: pct(r.avg_hits, r.avg_shots) ?? 0,
-    penetration: pct(r.avg_piercings, r.avg_hits) ?? 0,
-  })), [rows]);
+  const enriched = useMemo(() => rows.map(r => ({ ...r, winrate: pct(r.wins, r.battles) ?? 0 })), [rows]);
   const sorted = useMemo(() => [...enriched].sort((a, b) => compare(a[sort.key], b[sort.key], sort.desc)), [enriched, sort]);
   const maxDamage = Math.max(1, ...enriched.map(r => r.avg_damage));
   const shown = showAll ? sorted : sorted.slice(0, limit);
@@ -62,12 +78,13 @@ export function PlayersTable({ rows, total, minBattles, onMinBattles, detailed =
             options={[['1', '1'], ['3', '3'], ['5', '5'], ['10', '10']]} />
         </div>}>
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[760px] border-collapse text-[13.5px]">
+        <table className={`w-full border-collapse text-[13.5px] ${detailed ? '' : 'min-w-[900px]'}`}>
           <thead>
             <tr className="border-y border-line-soft text-[12px] text-muted">
               <th scope="col" className="w-10 px-3 py-2.5 text-left font-semibold">#</th>
-              <SortHead k="name" label="Игрок" align="text-left" sort={sort} onSort={onSort} />
-              {columns.map(([k, l]) => <SortHead key={k} k={k} label={l} sort={sort} onSort={onSort} />)}
+              <SortHead k="name" label="Игрок" align="text-left" sort={sort} onSort={onSort}
+                className="sticky left-0 z-10 bg-surface" />
+              {columns.map(([k, l, t]) => <SortHead key={k} k={k} label={l} title={t} sort={sort} onSort={onSort} />)}
               {onHide && <th scope="col" className="w-10" />}
             </tr>
           </thead>
@@ -76,7 +93,7 @@ export function PlayersTable({ rows, total, minBattles, onMinBattles, detailed =
               <tr key={r.name} className="group animate-fade border-b border-line-soft transition-colors hover:bg-surface-2"
                 style={{ animationDelay: `${Math.min(i, 12) * 25}ms` }}>
                 <td className="num px-3 py-2.5 text-dim">{i + 1}</td>
-                <td className="max-w-[220px] truncate px-3 py-2.5 font-semibold" title={r.name}>{r.name}</td>
+                <td className="sticky left-0 z-10 max-w-[220px] truncate bg-surface px-3 py-2.5 font-semibold transition-colors group-hover:bg-surface-2" title={r.name}>{r.name}</td>
                 {columns.map(([k]) => <Cell key={k} k={k} r={r} maxDamage={maxDamage} />)}
                 {onHide && (
                   <td className="px-2 text-right">
@@ -103,7 +120,7 @@ export function PlayersTable({ rows, total, minBattles, onMinBattles, detailed =
   );
 }
 
-type Enriched = PlayerRow & { winrate: number; accuracy: number; penetration: number };
+type Enriched = PlayerRow & { winrate: number };
 
 function Cell({ k, r, maxDamage }: { k: SortKey; r: Enriched; maxDamage: number }) {
   const td = 'num px-3 py-2.5 text-right';
@@ -127,9 +144,11 @@ function Cell({ k, r, maxDamage }: { k: SortKey; r: Enriched; maxDamage: number 
             style={{ background: `rgb(232 145 58 / ${(0.25 * r.avg_damage) / maxDamage})` }}>{fmt(r.avg_damage)}</span>
         </td>
       );
-    case 'avg_frags': return <td className={td}>{fmt1(r.avg_frags)}</td>;
-    case 'accuracy': return <td className={td}>{fmt1(r.accuracy)}%</td>;
-    case 'penetration': return <td className={td}>{fmt1(r.penetration)}%</td>;
+    case 'avg_frags': case 'avg_spotted': case 'avg_shots': case 'avg_hits': case 'avg_piercings':
+      return <td className={td}>{fmt1(r[k])}</td>;
+    case 'accuracy': case 'penetration': case 'survival':
+      return <td className={td}>{fmtPct(r[k])}</td>;
+    case 'avg_lifetime': return <td className={td}>{fmtTime(r.avg_lifetime)}</td>;
     case 'battles': return <td className={td}>{fmt(r.battles)}</td>;
     default: return <td className={td}>{fmt(r[k as 'avg_assists'])}</td>;
   }

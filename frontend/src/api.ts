@@ -83,11 +83,15 @@ export interface PlayerRow {
   avg_damage: number; avg_assists: number; avg_blocked: number; avg_received: number;
   avg_frags: number; avg_shots: number; avg_hits: number; avg_piercings: number;
   avg_dmg_win: number | null; avg_dmg_loss: number | null;
+  /** Percentages over the totals; null when there was nothing to divide by. */
+  accuracy: number | null; penetration: number | null; survival: number;
+  avg_xp: number; avg_spotted: number | null; avg_lifetime: number | null;
 }
 export interface MapRow { map_name: string; battles: number; wins: number; losses: number; draws: number; winrate: number }
 export interface VehicleRow {
   name: string; vehicle: string; battles: number; avg_damage: number; avg_assists: number;
   avg_frags: number; wins: number; losses: number;
+  avg_blocked: number; avg_shots: number; accuracy: number | null; penetration: number | null; survival: number;
 }
 export interface Summary {
   players: PlayerRow[]; players_total: number; maps: MapRow[]; vehicles: VehicleRow[]; hidden: string[];
