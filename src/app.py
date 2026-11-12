@@ -11,6 +11,7 @@ import threading
 import time
 import traceback
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.gzip import GZipMiddleware
@@ -24,7 +25,7 @@ from explainer import ExplainError, explain
 from insights import PROMPT_VERSION, build_period_facts
 from auth import create_token, decode_token, hash_password, verify_password
 from database import (
-    Scope, accept_invite, count_players, create_invite, create_team, create_user, delete_battle,
+    Scope, accept_invite, count_players, create_invite, create_team, create_user, delete_battle, get_battles_export,
     delete_team, get_admin_overview, get_battles_list, get_db_totals, get_hidden_players, get_invite,
     get_map_summary, get_member_role, get_player_summary, get_team, get_team_members, get_user_by_username,
     get_user_teams, get_vehicle_summary, hide_player, init_db, list_invites, remove_member, rename_team,
@@ -593,6 +594,46 @@ def remove_battle(battle_id: int, user: dict = Depends(require_user)):
     if outcome == "not_found":
         raise HTTPException(404, "Бой не найден среди твоих загрузок")
     return {"battle_id": battle_id, "outcome": outcome}
+
+
+# --- Export for Foresight ---
+
+@app.get("/api/export")
+def export_battles(
+    scope: str | None = None,
+    mine: bool = True,
+    mode: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user: dict = Depends(require_user),
+):
+    """Every battle in scope with all stored fields, oldest first, as a JSON file.
+
+    For scripts only (export_to_table.py builds the Foresight CSV from it); there is no button
+    for it in the interface. mine=true (the default, as the script sends it) is the viewer's own
+    uploads; mine=false or an explicit scope goes through resolve_scope: visible = mine plus my
+    teams, team:<id>, all (admins only).
+    """
+    require_db()
+    battle_scope = resolve_scope(user, scope, mine and scope is None, mode, date_from, date_to)
+    battles = get_battles_export(battle_scope, viewer_id=user["id"])
+    now = datetime.now(timezone.utc)
+    label = battle_scope.kind if battle_scope.kind != "team" else f"team{battle_scope.team_id}"
+    body = {
+        "exported_at": now.isoformat(timespec="seconds"),
+        "user": user["username"],
+        "scope": label,
+        "mode": mode,
+        "date_from": date_from,
+        "date_to": date_to,
+        "total_battles": len(battles),
+        # Battles stored before extended parsing; uploading the replay again fills them in.
+        "battles_without_details": sum(1 for b in battles if not b.get("details")),
+        "hidden_players": get_hidden_players(user["id"]),
+        "battles": battles,
+    }
+    filename = f"battlestats_{label}_{now:%Y%m%d_%H%M}.json"
+    return JSONResponse(body, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 # --- Hidden players ---

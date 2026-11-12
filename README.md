@@ -236,6 +236,7 @@ DATABASE_URL="postgresql://..." python scripts/clear_db.py
 | `POST` | `/api/battles/save` | Сохранение выбранных боёв: `{"tickets": [...]}` — билеты из ответа `/api/upload` |
 | `GET` | `/api/battles?scope=&mode=` | Список боёв |
 | `DELETE` | `/api/battles/{id}` | Убрать бой из своей истории |
+| `GET` | `/api/export?mine=&scope=&mode=&date_from=&date_to=` | Все бои охвата со всеми полями, JSON-файлом — для скрипта выгрузки в Форсайт, кнопки в интерфейсе нет. По умолчанию свои; `mine=false` — свои и команд, `scope=all` — админ |
 | `GET` | `/api/analytics/summary?scope=&mode=&min_battles=` | Агрегаты: итоги, игроки, карты, танки |
 | `GET` | `/api/analytics/totals?scope=&mode=` | Только счётчики |
 | `GET` | `/api/analytics/daily?scope=&mode=&date_from=&date_to=` | По дням и за период: бои, победы, средние наших игроков |

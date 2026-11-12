@@ -604,3 +604,56 @@ def test_the_site_says_when_it_is_not_built(client, tmp_path, monkeypatch):
     import app as app_module
     monkeypatch.setattr(app_module, "FRONTEND_DIR", tmp_path / "missing")
     assert client.get("/analytics").status_code == 503
+
+
+# --- export for Foresight (scripts only, no button) ---
+
+def test_export_requires_a_token(client):
+    assert client.get("/api/export").status_code == 401
+
+
+def test_export_returns_own_battles_oldest_first_as_a_file(client, auth, fake_db):
+    headers = auth()
+    _save(client, headers, date_time="03.01.2025 10:00:00", winner_team=2)
+    _save(client, headers, date_time="02.01.2025 10:00:00", map_name="01_karelia")
+
+    res = client.get("/api/export", headers=headers)
+    assert res.status_code == 200
+    assert res.headers["content-disposition"].startswith('attachment; filename="battlestats_mine_')
+    body = res.json()
+    assert body["scope"] == "mine" and body["total_battles"] == 2
+    assert [b["date_time"][:10] for b in body["battles"]] == ["2025-01-02", "2025-01-03"]
+    battle = body["battles"][0]
+    assert battle["recorder"]["playerName"] == "Alice"
+    assert battle["players"][0]["details"]["accountDBID"] >= 1000
+
+
+def test_export_filters_by_day_inclusive(client, auth, fake_db):
+    headers = auth()
+    for day in ("01", "02", "03"):
+        _save(client, headers, date_time=f"{day}.01.2025 10:00:00", map_name=f"0{day}_map")
+    body = client.get("/api/export?date_from=2025-01-02&date_to=2025-01-02", headers=headers).json()
+    assert [b["date_time"][:10] for b in body["battles"]] == ["2025-01-02"]
+
+
+def test_export_rejects_a_malformed_date(client, auth):
+    assert client.get("/api/export?date_from=02.01.2025", headers=auth()).status_code == 400
+
+
+def test_export_never_shows_strangers_battles(client, auth, fake_db):
+    _save(client, auth("first"))
+    second = auth("second")
+    assert client.get("/api/export", headers=second).json()["total_battles"] == 0
+    # mine=false is "mine plus my teams" now, not the whole database
+    visible = client.get("/api/export?mine=false", headers=second).json()
+    assert visible["scope"] == "visible" and visible["total_battles"] == 0
+    assert client.get("/api/export?scope=all", headers=second).status_code == 403
+
+
+def test_export_of_the_whole_database_is_for_admins(client, auth, fake_db, monkeypatch):
+    _save(client, auth("first"))
+    boss = auth("boss")
+    monkeypatch.setattr(config, "ADMIN_USER_IDS", frozenset({fake_db.get_user_by_username("boss")["id"]}))
+    body = client.get("/api/export?scope=all", headers=boss).json()
+    assert body["scope"] == "all" and body["total_battles"] == 1
+    assert body["battles"][0]["recorder"] is None  # someone else's upload

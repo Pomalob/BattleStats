@@ -405,6 +405,7 @@ def fake_db(monkeypatch):
         "list_invites", "revoke_invite", "get_invite", "accept_invite", "get_admin_overview",
         "get_period_rows", "get_rating_rows", "get_recorder_names", "get_explanation",
         "start_explanation", "finish_explanation", "count_explanations", "get_explanation_log",
+        "get_battles_export",
     ):
         monkeypatch.setattr(app_module, name, getattr(db, name))
     for limiter in (app_module._login_failures, app_module._registrations, app_module._uploaded_files):
