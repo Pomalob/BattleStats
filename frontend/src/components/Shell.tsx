@@ -100,9 +100,9 @@ export function Shell() {
               <span className="block text-[11px] text-dim">Аккаунт</span>
             </span>
           </NavLink>
-          {isSupporter && daysLeft != null && !expiringSoon && (
+          {isSupporter && (
             <div className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-[12px] text-accent">
-              Подписка активна
+              Подписка активна{daysLeft != null ? ` · до конца осталось {daysLeft} дн.` : ''}
             </div>
           )}
           {!isSupporter && (

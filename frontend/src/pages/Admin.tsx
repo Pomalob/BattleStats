@@ -83,8 +83,8 @@ interface SupporterRow {
 function SupporterList() {
   const [supporters, setSupporters] = useState<SupporterRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState<{ username: string; is_supporter: boolean; expires_at: string | null; tier: string | null }>({
-    username: '', is_supporter: true, expires_at: null, tier: null,
+  const [form, setForm] = useState<{ username: string; is_supporter: boolean; expires_at: string | null }>({
+    username: '', is_supporter: true, expires_at: null,
   });
   const [msg, setMsg] = useState<{ text: string; ok?: boolean } | null>(null);
 
@@ -105,9 +105,9 @@ function SupporterList() {
     e.preventDefault();
     setMsg(null);
     try {
-      await setSupporter(form.username, form.is_supporter, form.expires_at || undefined, form.tier || undefined);
+      await setSupporter(form.username, form.is_supporter, form.expires_at || undefined);
       setMsg({ text: `Готово: ${form.username} теперь ${form.is_supporter ? 'поддерживает проект' : 'не поддерживает проект'}`, ok: true });
-      setForm({ username: '', is_supporter: true, expires_at: null, tier: null });
+      setForm({ username: '', is_supporter: true, expires_at: null });
       await reload();
     } catch (e) { setMsg({ text: (e as Error).message }); }
   };
@@ -137,11 +137,6 @@ function SupporterList() {
             <input type="date" value={form.expires_at ?? ''} onChange={e => setForm({ ...form, expires_at: e.target.value || null })}
               className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-[13px] outline-none focus:border-accent" />
           </div>
-          <div className="col-span-1 sm:col-span-1">
-            <label className="block text-[12px] font-semibold text-muted mb-1">Тариф</label>
-            <input className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-[13px] outline-none focus:border-accent"
-              value={form.tier ?? ''} onChange={e => setForm({ ...form, tier: e.target.value || null })} placeholder="например: месяц" />
-          </div>
           <div className="col-span-full">
             <Button type="submit" disabled={!form.username.trim()}>{msg ? (msg.ok ? 'Готово' : 'Ошибка') : 'Выдать'}</Button>
           </div>
@@ -152,7 +147,7 @@ function SupporterList() {
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-[12.5px]">
             <thead><tr className="border-b border-line-soft text-[11.5px] text-muted">
-              {['Ник', 'Подписка', 'Действует до', 'Тариф'].map((h, i) => (
+              {['Ник', 'Подписка', 'Действует до'].map((h, i) => (
                 <th key={h} scope="col" className={`px-3 py-2.5 font-semibold text-left ${i > 0 ? 'text-right' : ''}`}>{h}</th>
               ))}
             </tr></thead>
@@ -162,9 +157,8 @@ function SupporterList() {
                   <td className="px-3 py-2.5 font-semibold">{s.username}</td>
                   <td className="px-3 py-2.5 text-right">{s.is_supporter ? <span className="text-win font-semibold">Активна</span> : <span className="text-muted">Нет</span>}</td>
                   <td className="px-3 py-2.5 text-right text-muted">{s.subscription_expires_at ?? '—'}</td>
-                  <td className="px-3 py-2.5 text-right text-muted">{s.subscription_tier ?? '—'}</td>
                 </tr>
-              )) : <tr><td colSpan={4} className="px-3 py-8 text-center text-muted">Подписчиков пока нет</td></tr>}
+              )) : <tr><td colSpan={3} className="px-3 py-8 text-center text-muted">Подписчиков пока нет</td></tr>}
             </tbody>
           </table>
         </div>
