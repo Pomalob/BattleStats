@@ -1,7 +1,7 @@
 import { useTitle } from '../title';
 import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { api, AuthError, send } from '../api';
+import { api, AuthError, send, listSupporters, setSupporter } from '../api';
 import { LineChart } from '../components/charts';
 import { useShell } from '../components/Shell';
 import { Button, Panel, Skeleton } from '../components/ui';
@@ -68,7 +68,108 @@ export function AdminPage() {
         </>
       )}
       <AiLog />
+      <SupporterList />
     </div>
+  );
+}
+
+/* --- Supporter subscriptions: grant / revoke supporter status by username --- */
+
+interface SupporterRow {
+  id: number; username: string; is_supporter: boolean;
+  subscription_expires_at: string | null; subscription_tier: string | null;
+}
+
+function SupporterList() {
+  const [supporters, setSupporters] = useState<SupporterRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState<{ username: string; is_supporter: boolean; expires_at: string | null; tier: string | null }>({
+    username: '', is_supporter: true, expires_at: null, tier: null,
+  });
+  const [msg, setMsg] = useState<{ text: string; ok?: boolean } | null>(null);
+
+  const reload = async () => {
+    setLoading(true);
+    try {
+      const data = await listSupporters();
+      setSupporters((data.supporters ?? []).map(s => ({
+        id: s.id, username: s.username, is_supporter: s.is_supporter,
+        subscription_expires_at: s.expires_at, subscription_tier: s.tier,
+      })));
+    } catch (e) { setMsg({ text: (e as Error).message }); }
+    finally { setLoading(false); };
+  };
+  useEffect(() => { reload(); }, []);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMsg(null);
+    try {
+      await setSupporter(form.username, form.is_supporter, form.expires_at || undefined, form.tier || undefined);
+      setMsg({ text: `Готово: ${form.username} теперь ${form.is_supporter ? 'поддерживает проект' : 'не поддерживает проект'}`, ok: true });
+      setForm({ username: '', is_supporter: true, expires_at: null, tier: null });
+      await reload();
+    } catch (e) { setMsg({ text: (e as Error).message }); }
+  };
+
+  return (
+    <Panel title="Поддержка проекта (Boosty)"
+      aside={<Button size="sm" variant="ghost" disabled={loading} onClick={reload}>{loading ? '…' : 'Обновить'}</Button>}>
+      <div className="space-y-4 px-5 pb-5 pt-3 text-[13px]">
+        <p className="text-muted">После покупки подписки на Boosty найдите пользователя по нику и выдайте ему роль 지지теля. Доступ к аналитике откроется автоматически.</p>
+
+        <form onSubmit={submit} className="space-y-3 grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+          <div className="col-span-1 sm:col-span-2">
+            <label className="block text-[12px] font-semibold text-muted mb-1">Ник пользователя</label>
+            <input className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-[13px] outline-none focus:border-accent"
+              value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="введите ник" />
+          </div>
+          <div>
+            <label className="block text-[12px] font-semibold text-muted mb-1">Статус</label>
+            <select value={form.is_supporter ? '1' : '0'} onChange={e => setForm({ ...form, is_supporter: e.target.value === '1' })}
+              className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-[13px] outline-none focus:border-accent">
+              <option value="1">Выдать подписку</option>
+              <option value="0">Забрать подписку</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[12px] font-semibold text-muted mb-1">До (дата)</label>
+            <input type="date" value={form.expires_at ?? ''} onChange={e => setForm({ ...form, expires_at: e.target.value || null })}
+              className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-[13px] outline-none focus:border-accent" />
+          </div>
+          <div className="col-span-1 sm:col-span-1">
+            <label className="block text-[12px] font-semibold text-muted mb-1">Тариф</label>
+            <input className="h-9 w-full rounded-md border border-line bg-surface-2 px-3 text-[13px] outline-none focus:border-accent"
+              value={form.tier ?? ''} onChange={e => setForm({ ...form, tier: e.target.value || null })} placeholder="например: месяц" />
+          </div>
+          <div className="col-span-full">
+            <Button type="submit" disabled={!form.username.trim()}>{msg ? (msg.ok ? 'Готово' : 'Ошибка') : 'Выдать'}</Button>
+          </div>
+        </form>
+
+        {msg && <div className={`rounded-md px-3 py-2 text-[12px] ${msg.ok ? 'border-win/40 bg-win/10 text-win' : 'border-loss/40 bg-loss/10 text-loss'}`}>{msg.text}</div>}
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-[12.5px]">
+            <thead><tr className="border-b border-line-soft text-[11.5px] text-muted">
+              {['Ник', 'Подписка', 'Действует до', 'Тариф'].map((h, i) => (
+                <th key={h} scope="col" className={`px-3 py-2.5 font-semibold text-left ${i > 0 ? 'text-right' : ''}`}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {supporters.length > 0 ? supporters.map(s => (
+                <tr key={s.username} className="border-b border-line-soft">
+                  <td className="px-3 py-2.5 font-semibold">{s.username}</td>
+                  <td className="px-3 py-2.5 text-right">{s.is_supporter ? <span className="text-win font-semibold">Активна</span> : <span className="text-muted">Нет</span>}</td>
+                  <td className="px-3 py-2.5 text-right text-muted">{s.subscription_expires_at ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-right text-muted">{s.subscription_tier ?? '—'}</td>
+                </tr>
+              )) : <tr><td colSpan={4} className="px-3 py-8 text-center text-muted">Подписчиков пока нет</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Panel>
   );
 }
 

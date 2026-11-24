@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, NavLink, Outlet, useLocation, useOutletContext } from 'react-router-dom';
-import { api, AuthError, send, token, type Me, type Team } from '../api';
+import { api, AuthError, send, token, supporterMe, type Me, type Team, type Subscription } from '../api';
 import { Button } from './ui';
 
 export interface ShellContext { me: Me | null; teams: Team[]; reloadTeams: () => Promise<void> }
@@ -29,6 +29,7 @@ const icons = {
   chart: 'M3 3v18h18M7 15l4-4 3 3 5-6',
   team: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
   admin: 'M12 2 3 6v6c0 5 3.8 9.4 9 10 5.2-.6 9-5 9-10V6l-9-4z',
+  support: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
 };
 
 export function Icon({ d, size = 18 }: { d: string; size?: number }) {
@@ -45,6 +46,7 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
 export function Shell() {
   const [me, setMe] = useState<Me | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
   const location = useLocation();
   const signedIn = Boolean(token());
 
@@ -55,6 +57,7 @@ export function Shell() {
   useEffect(() => {
     if (!signedIn) return;
     api<Me>('/api/auth/me').then(setMe).catch(err => { if (!(err instanceof AuthError)) console.error(err); });
+    supporterMe().then(setSubscription).catch(() => setSubscription(null));
     reloadTeams().catch(() => {});
   }, [reloadTeams, signedIn]);
 
@@ -62,26 +65,56 @@ export function Shell() {
     return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
   }
 
+  const isSupporter = Boolean(me?.is_supporter || subscription?.is_supporter);
+  const daysLeft = subscription?.days_left ?? null;
+  const expiringSoon = Boolean(subscription?.expiring_soon);
+
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[232px_1fr]">
       <aside className="flex flex-col gap-6 border-b border-line-soft bg-surface/60 p-4 lg:sticky lg:top-0 lg:h-screen lg:border-r lg:border-b-0">
         <Logo />
         <nav className="flex gap-1 overflow-x-auto [scrollbar-width:none] lg:flex-col" aria-label="Разделы">
           <NavLink to="/" end className={navClass}><Icon d={icons.upload} /> Быстрый чек</NavLink>
-          <NavLink to="/analytics" className={navClass}><Icon d={icons.chart} /> Аналитика</NavLink>
+          {isSupporter ? (
+            <NavLink to="/analytics" className={navClass}><Icon d={icons.chart} /> Аналитика</NavLink>
+          ) : (
+            <a onClick={e => e.preventDefault()} className={`${itemClass} text-muted opacity-50 cursor-not-allowed`}><Icon d={icons.chart} /> Аналитика</a>
+          )}
           <NavLink to="/team" className={navClass}><Icon d={icons.team} /> Команда</NavLink>
-          {me?.is_admin && <NavLink to="/admin" className={navClass}><Icon d={icons.admin} /> Админка</NavLink>}
+          {me?.is_admin && (isSupporter ? (
+            <NavLink to="/admin" className={navClass}><Icon d={icons.admin} /> Админка</NavLink>
+          ) : (
+            <a onClick={e => e.preventDefault()} className={`${itemClass} text-muted opacity-50 cursor-not-allowed`}><Icon d={icons.admin} /> Админка</a>
+          ))}
+          {isSupporter && daysLeft != null && expiringSoon && (
+            <div className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-[12px] text-accent text-center">
+              До конца подписки осталось {daysLeft} дн. — продлите на Boosty
+            </div>
+          )}
+          <a href="https://boosty.to/dotsuris" target="_blank" rel="noopener noreferrer" className={navClass({ isActive: false })}><Icon d={icons.support} /> Поддержать на Boosty</a>
         </nav>
-        <NavLink to="/account" className={({ isActive }) => `mt-auto hidden items-center gap-3 rounded-md border px-3 py-2.5 transition-colors lg:flex ${
-          isActive ? 'border-accent/40 bg-accent-soft' : 'border-line-soft hover:bg-surface-2'}`}>
-          <span className="grid size-8 place-items-center rounded-full bg-surface-3 text-[13px] font-bold text-accent">
-            {(me?.username ?? '?').slice(0, 1).toUpperCase()}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] font-semibold">{me?.username ?? '…'}</span>
-            <span className="block text-[11px] text-dim">Аккаунт</span>
-          </span>
-        </NavLink>
+        <div className="mt-auto space-y-2">
+          <NavLink to="/account" className={({ isActive }) => `mt-auto hidden items-center gap-3 rounded-md border px-3 py-2.5 transition-colors lg:flex ${
+            isActive ? 'border-accent/40 bg-accent-soft' : 'border-line-soft hover:bg-surface-2'}`}>
+            <span className="grid size-8 place-items-center rounded-full bg-surface-3 text-[13px] font-bold text-accent">
+              {(me?.username ?? '?').slice(0, 1).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-semibold">{me?.username ?? '…'}</span>
+              <span className="block text-[11px] text-dim">Аккаунт</span>
+            </span>
+          </NavLink>
+          {isSupporter && daysLeft != null && !expiringSoon && (
+            <div className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-[12px] text-accent">
+              Подписка активна
+            </div>
+          )}
+          {!isSupporter && (
+            <div className="rounded-lg border border-loss/40 bg-loss/10 px-3 py-2 text-[12px] text-loss">
+              Бесплатный доступ: быстрый чек и команда. Аналитика — только по подписке.
+            </div>
+          )}
+        </div>
       </aside>
       <div className="flex min-w-0 flex-col">
         <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8">
@@ -90,6 +123,15 @@ export function Shell() {
         <Footer />
       </div>
       {me?.consent_required && <ConsentPrompt onDone={() => setMe({ ...me, consent_required: false })} />}
+      {!isSupporter && location.pathname.startsWith('/analytics') && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-bg/90 backdrop-blur-sm">
+          <div className="rounded-xl border border-loss/40 bg-surface p-6 text-center max-w-md mx-4">
+            <h2 className="text-[17px] font-extrabold mb-2">Нужна подписка</h2>
+            <p className="mb-4 text-[13px] text-muted">Аналитика доступна только поддерживающим проект. Подпишись на Boosty и напиши администратору с ником — выдадим доступ.</p>
+            <a href="https://boosty.to/dotsuris" target="_blank" rel="noopener noreferrer" className="inline-block rounded-md bg-accent px-5 py-2 text-[13px] font-bold text-bg hover:bg-accent-hover">Поддержать на Boosty</a>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -131,4 +173,4 @@ function ConsentPrompt({ onDone }: { onDone: () => void }) {
       </div>
     </div>
   );
-}
+}

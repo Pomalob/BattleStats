@@ -259,6 +259,9 @@ def init_db():
         _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0")
         _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_version TEXT")
         _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS consent_at TIMESTAMPTZ")
+        _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_supporter BOOLEAN NOT NULL DEFAULT FALSE")
+        _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ")
+        _run_migration(conn, "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_tier TEXT")
         _run_migration(conn, "ALTER TABLE explanations ADD COLUMN IF NOT EXISTS error_kind TEXT")
         _run_migration(conn, "ALTER TABLE explanations ADD COLUMN IF NOT EXISTS error JSONB")
         _run_migration(conn, "ALTER TABLE explanations ADD COLUMN IF NOT EXISTS duration_ms INTEGER")
@@ -1268,6 +1271,57 @@ def accept_invite(code: str, user_id: int) -> tuple[str, int | None]:
                 return "already", team_id
             cur.execute("UPDATE team_invites SET uses = uses + 1 WHERE code = %s", (code,))
             return "joined", team_id
+
+
+# --- Supporter subscriptions ---
+
+def get_user_subscription(user_id: int) -> dict | None:
+    """The current supporter status of a user: active flag, expiry date, tier."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT is_supporter, subscription_expires_at, subscription_tier FROM users WHERE id = %s",
+                (user_id,),
+            )
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def set_user_subscription(user_id: int, is_supporter: bool,
+                          expires_at=None, tier: str | None = None) -> None:
+    """Grant or revoke supporter status. Admin-only: sets the flag, expiry and tier."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET is_supporter = %s, subscription_expires_at = %s,"
+                " subscription_tier = %s WHERE id = %s",
+                (is_supporter, expires_at, tier, user_id),
+            )
+
+
+def list_supporters() -> list[dict]:
+    """Every user with supporter status, for the admin page."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, is_supporter, subscription_expires_at, subscription_tier"
+                " FROM users WHERE is_supporter ORDER BY username"
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+
+def users_expiring_soon(days: int = 5) -> list[dict]:
+    """Supporters whose subscription ends within `days` days, for the expiry notice."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, subscription_expires_at, subscription_tier FROM users"
+                " WHERE is_supporter AND subscription_expires_at IS NOT NULL"
+                " AND subscription_expires_at > NOW()"
+                " AND subscription_expires_at <= NOW() + make_interval(days => %s)",
+                (days,),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
 
 # --- Admin ---

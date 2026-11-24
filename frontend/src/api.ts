@@ -56,6 +56,34 @@ export const api = <T>(path: string) => request<T>(path);
 export const send = <T>(path: string, method: string, body?: unknown) => request<T>(path, { method }, body);
 export const upload = <T>(path: string, form: FormData) => request<T>(path, { method: 'POST', body: form });
 
+export async function supporterMe(): Promise<Subscription> {
+  const res = await fetch('/api/supporter/me', {
+    headers: { Authorization: `Bearer ${token()}` },
+  });
+  if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+  return (await res.json()) as unknown as Subscription;
+}
+
+export async function setSupporter(username: string, isSupporter: boolean, expiresAt?: string | null, tier?: string | null) {
+  const res = await fetch('/api/admin/supporters', {
+    method: 'POST', headers: {
+      Authorization: `Bearer ${token()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ username, is_supporter: isSupporter, expires_at: expiresAt, tier }),
+  });
+  if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+  return res.json();
+}
+
+export async function listSupporters() {
+  const res = await fetch('/api/admin/supporters', {
+    headers: { Authorization: `Bearer ${token()}` },
+  });
+  if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+  return (await res.json()) as unknown as { supporters: Subscription[] };
+}
+
 /** Sign-in and registration need no token yet. */
 export async function authPost(mode: 'login' | 'register', body: Record<string, unknown>) {
   const res = await fetch(`/api/auth/${mode}`, {
@@ -68,7 +96,13 @@ export async function authPost(mode: 'login' | 'register', body: Record<string, 
 
 export type Mode = '' | 'clan' | 'onslaught' | 'standard';
 
-export interface Me { id: number; username: string; is_admin: boolean; consent_required: boolean }
+export interface Me { id: number; username: string; is_admin: boolean; consent_required: boolean,
+  is_supporter: boolean; subscription_expires_at: string | null; subscription_tier: string | null }
+export interface Subscription {
+  id: number; username: string;
+  is_supporter: boolean; expires_at: string | null; tier: string | null;
+  days_left: number | null; expiring_soon: boolean;
+}
 export interface Team { id: number; name: string; role: string; members: number }
 
 export interface DayRow {

@@ -29,7 +29,8 @@ from database import (
     delete_team, get_admin_overview, get_battles_list, get_db_totals, get_hidden_players, get_invite,
     get_map_summary, get_member_role, get_player_summary, get_team, get_team_members, get_user_by_username,
     get_user_teams, get_vehicle_summary, hide_player, init_db, list_invites, remove_member, rename_team,
-    revoke_invite, save_battle, unhide_player, get_daily_summary, get_user_auth, set_password, bump_token_version,
+    revoke_invite, save_battle, unhide_player, get_daily_summary, get_user_auth, get_user_subscription,
+    set_user_subscription, list_supporters, users_expiring_soon, set_password, bump_token_version,
     record_consent, delete_user, get_period_rows, get_rating_rows, get_recorder_names, get_explanation,
     start_explanation, finish_explanation, count_explanations, get_explanation_log,
 )
@@ -113,6 +114,10 @@ def _current_user(authorization: str | None) -> dict | None:
             "consent_required": account.get("consent_version") != config.CONSENT_VERSION}
     # Read on every request, so adding or removing an admin needs no new token.
     user["is_admin"] = user["id"] in config.ADMIN_USER_IDS
+    sub = get_user_subscription(user_id) or {}
+    user["is_supporter"] = bool(sub.get("is_supporter"))
+    user["subscription_expires_at"] = sub.get("subscription_expires_at")
+    user["subscription_tier"] = sub.get("subscription_tier")
     return user
 
 
@@ -946,6 +951,19 @@ def require_admin(user: dict = Depends(require_user)) -> dict:
     return user
 
 
+def require_supporter(user: dict = Depends(require_user)) -> dict:
+    """Paid pages only: the user must have an active supporter subscription."""
+    sub = user.get("is_supporter")
+    expires = user.get("subscription_expires_at")
+    if not sub:
+        raise HTTPException(403, "Нужен платный доступ — поддержи проект на Boosty, чтобы открыть аналитику и админку")
+    if expires:
+        from datetime import datetime, timezone
+        if datetime.fromisoformat(expires.replace("Z", "+00:00")) < datetime.now(timezone.utc):
+            raise HTTPException(403, "Подписка истекла — продли её на Boosty, чтобы пользоваться аналитикой")
+    return user
+
+
 @app.get("/api/admin/overview")
 def admin_overview(user: dict = Depends(require_admin)):
     require_db()
@@ -980,6 +998,52 @@ def admin_check_explainer(user: dict = Depends(require_admin)):
         return {"ok": False, "kind": e.kind, "message": explainer.KINDS.get(e.kind, e.kind), "detail": e.detail,
                 "duration_ms": int((time.monotonic() - started) * 1000)}
     return {**result, "duration_ms": int((time.monotonic() - started) * 1000)}
+
+
+# --- Supporter management (admin) ---
+
+@app.get("/api/admin/supporters")
+def admin_supporters(user: dict = Depends(require_admin)):
+    """All supporters with their expiry dates, for the admin page."""
+    require_db()
+    return {"supporters": list_supporters()}
+
+
+@app.post("/api/admin/supporters")
+def admin_set_supporter(body: dict = Depends(json_body), user: dict = Depends(require_admin)):
+    """Grant or revoke supporter status by username. Body: {username, is_supporter, expires_at?, tier?}"""
+    require_db()
+    username = (body.get("username") or "").strip()
+    if not username:
+        raise HTTPException(400, "Укажи имя пользователя")
+    is_supporter = bool(body.get("is_supporter"))
+    expires_at = body.get("expires_at")  # ISO string or None
+    tier = body.get("tier") or None
+    acct = get_user_by_username(username)
+    if not acct:
+        raise HTTPException(404, "Пользователь не найден")
+    set_user_subscription(acct["id"], is_supporter, expires_at, tier)
+    return {"ok": True, "username": username, "is_supporter": is_supporter}
+
+
+@app.get("/api/supporter/me")
+def supporter_me(user: dict = Depends(require_user)):
+    """Current user's supporter status and days-left notice."""
+    require_db()
+    is_supp = bool(user.get("is_supporter"))
+    expires = user.get("subscription_expires_at")
+    days_left = None
+    if expires:
+        from datetime import datetime, timezone
+        exp = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+        days_left = max(0, (exp - datetime.now(timezone.utc)).days)
+    return {
+        "is_supporter": is_supp,
+        "expires_at": expires,
+        "tier": user.get("subscription_tier"),
+        "days_left": days_left,
+        "expiring_soon": days_left is not None and days_left <= 5,
+    }
 
 
 # --- The site itself ---
