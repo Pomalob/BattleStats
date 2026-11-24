@@ -133,6 +133,16 @@ def require_user(authorization: str | None = Header(default=None)) -> dict:
     return user
 
 
+def require_supporter_or_team_member(user: dict = Depends(require_user)) -> dict:
+    """Доступ к аналитике: саппортеры (вся аналитика) и члены команд (только своя команда)."""
+    if user.get("is_supporter"):
+        return user
+    teams = user.get("teams") or []
+    if teams:
+        return user
+    raise HTTPException(403, "Нужен платный доступ или членство в команде, чтобы открыть аналитику")
+
+
 def require_db() -> None:
     if not _DB_AVAILABLE:
         raise HTTPException(503, "База данных недоступна")
@@ -964,16 +974,6 @@ def require_supporter(user: dict = Depends(require_user)) -> dict:
         if datetime.fromisoformat(expires.replace("Z", "+00:00")) < datetime.now(timezone.utc):
             raise HTTPException(403, "Подписка истекла — продли её на Boosty, чтобы пользоваться аналитикой")
     return user
-
-
-def require_supporter_or_team_member(user: dict = Depends(require_user)) -> dict:
-    """Доступ к аналитике: саппортеры (вся аналитика) и члены команд (только своя команда)."""
-    if user.get("is_supporter"):
-        return user
-    teams = user.get("teams") or []
-    if teams:
-        return user
-    raise HTTPException(403, "Нужен платный доступ или членство в команде, чтобы открыть аналитику")
 
 
 @app.get("/api/admin/overview")
