@@ -49,7 +49,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="team" element={<TeamPage />} />
           <Route path="join/:code" element={<JoinPage />} />
           <Route path="account" element={<AccountPage />} />
-          <Route path="admin" element={<SupporterRoute><AdminPage /></SupporterRoute>} />
+          <Route path="admin" element={<AdminPage />} />
           <Route path="app/*" element={<Navigate to="/analytics" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

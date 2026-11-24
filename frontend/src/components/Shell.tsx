@@ -81,11 +81,7 @@ export function Shell() {
             <a onClick={e => e.preventDefault()} className={`${itemClass} text-muted opacity-50 cursor-not-allowed`}><Icon d={icons.chart} /> Аналитика</a>
           )}
           <NavLink to="/team" className={navClass}><Icon d={icons.team} /> Команда</NavLink>
-          {me?.is_admin && (isSupporter ? (
-            <NavLink to="/admin" className={navClass}><Icon d={icons.admin} /> Админка</NavLink>
-          ) : (
-            <a onClick={e => e.preventDefault()} className={`${itemClass} text-muted opacity-50 cursor-not-allowed`}><Icon d={icons.admin} /> Админка</a>
-          ))}
+          {me?.is_admin && <NavLink to="/admin" className={navClass}><Icon d={icons.admin} /> Админка</NavLink>}
           {isSupporter && daysLeft != null && expiringSoon && (
             <div className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-[12px] text-accent text-center">
               До конца подписки осталось {daysLeft} дн. — продлите на Boosty
