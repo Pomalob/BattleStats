@@ -118,6 +118,8 @@ def _current_user(authorization: str | None) -> dict | None:
     user["is_supporter"] = bool(sub.get("is_supporter"))
     user["subscription_expires_at"] = sub.get("subscription_expires_at")
     user["subscription_tier"] = sub.get("subscription_tier")
+    teams = get_user_teams(user_id)
+    user["teams"] = teams
     return user
 
 
@@ -672,7 +674,7 @@ def remove_hidden_player(name: str, user: dict = Depends(require_user)):
 @app.get("/api/analytics/totals")
 def analytics_totals(scope: str | None = None, mine: bool = False, mode: str | None = None,
                      date_from: str | None = None, date_to: str | None = None,
-                     user: dict = Depends(require_user)):
+                     user: dict = Depends(require_supporter_or_team_member)):
     """Just the counters, for the header strip on the upload page."""
     require_db()
     return get_db_totals(resolve_scope(user, scope, mine, mode, date_from, date_to))
@@ -681,7 +683,7 @@ def analytics_totals(scope: str | None = None, mine: bool = False, mode: str | N
 @app.get("/api/analytics/daily")
 def analytics_daily(scope: str | None = None, mode: str | None = None,
                     date_from: str | None = None, date_to: str | None = None,
-                    user: dict = Depends(require_user)):
+                    user: dict = Depends(require_supporter_or_team_member)):
     """Per-day series and period totals for the overview: results plus our players' averages."""
     require_db()
     return get_daily_summary(resolve_scope(user, scope, False, mode, date_from, date_to), viewer_id=user["id"])
@@ -695,7 +697,7 @@ def analytics_summary(
     min_battles: int = 1,
     date_from: str | None = None,
     date_to: str | None = None,
-    user: dict = Depends(require_user),
+    user: dict = Depends(require_supporter_or_team_member),
 ):
     if not _DB_AVAILABLE:
         return JSONResponse({"error": "database_unavailable"}, status_code=503)
@@ -737,7 +739,7 @@ def _explain_used(user: dict) -> int:
 
 
 @app.get("/api/analytics/explain/status")
-def explain_status(user: dict = Depends(require_user)):
+def explain_status(user: dict = Depends(require_supporter_or_team_member)):
     require_db()
     return {"enabled": config.EXPLAIN_ENABLED, "limit": config.EXPLAIN_DAILY_LIMIT,
             "used": _explain_used(user), "unlimited": bool(user.get("is_admin")),
@@ -745,7 +747,7 @@ def explain_status(user: dict = Depends(require_user)):
 
 
 @app.post("/api/analytics/explain")
-def analytics_explain(body: dict = Depends(json_body), user: dict = Depends(require_user)):
+def analytics_explain(body: dict = Depends(json_body), user: dict = Depends(require_supporter_or_team_member)):
     require_db()
     if not config.EXPLAIN_ENABLED:
         raise HTTPException(503, "ИИ-разбор пока не включён")
@@ -962,6 +964,16 @@ def require_supporter(user: dict = Depends(require_user)) -> dict:
         if datetime.fromisoformat(expires.replace("Z", "+00:00")) < datetime.now(timezone.utc):
             raise HTTPException(403, "Подписка истекла — продли её на Boosty, чтобы пользоваться аналитикой")
     return user
+
+
+def require_supporter_or_team_member(user: dict = Depends(require_user)) -> dict:
+    """Доступ к аналитике: саппортеры (вся аналитика) и члены команд (только своя команда)."""
+    if user.get("is_supporter"):
+        return user
+    teams = user.get("teams") or []
+    if teams:
+        return user
+    raise HTTPException(403, "Нужен платный доступ или членство в команде, чтобы открыть аналитику")
 
 
 @app.get("/api/admin/overview")

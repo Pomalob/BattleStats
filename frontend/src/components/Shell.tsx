@@ -75,11 +75,7 @@ export function Shell() {
         <Logo />
         <nav className="flex gap-1 overflow-x-auto [scrollbar-width:none] lg:flex-col" aria-label="Разделы">
           <NavLink to="/" end className={navClass}><Icon d={icons.upload} /> Быстрый чек</NavLink>
-          {isSupporter ? (
-            <NavLink to="/analytics" className={navClass}><Icon d={icons.chart} /> Аналитика</NavLink>
-          ) : (
-            <a onClick={e => e.preventDefault()} className={`${itemClass} text-muted opacity-50 cursor-not-allowed`}><Icon d={icons.chart} /> Аналитика</a>
-          )}
+          <NavLink to="/analytics" className={navClass}><Icon d={icons.chart} /> Аналитика</NavLink>
           <NavLink to="/team" className={navClass}><Icon d={icons.team} /> Команда</NavLink>
           {me?.is_admin && <NavLink to="/admin" className={navClass}><Icon d={icons.admin} /> Админка</NavLink>}
           {isSupporter && daysLeft != null && expiringSoon && (
@@ -105,7 +101,7 @@ export function Shell() {
               Подписка активна{daysLeft != null ? ` · до конца осталось {daysLeft} дн.` : ''}
             </div>
           )}
-          {!isSupporter && (
+          {!isSupporter && teams.length === 0 && (
             <div className="rounded-lg border border-loss/40 bg-loss/10 px-3 py-2 text-[12px] text-loss">
               Бесплатный доступ: быстрый чек и команда. Аналитика — только по подписке.
             </div>
@@ -119,7 +115,7 @@ export function Shell() {
         <Footer />
       </div>
       {me?.consent_required && <ConsentPrompt onDone={() => setMe({ ...me, consent_required: false })} />}
-      {!isSupporter && location.pathname.startsWith('/analytics') && (
+      {!isSupporter && teams.length === 0 && location.pathname.startsWith('/analytics') && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-bg/90 backdrop-blur-sm">
           <div className="rounded-xl border border-loss/40 bg-surface p-6 text-center max-w-md mx-4">
             <h2 className="text-[17px] font-extrabold mb-2">Нужна подписка</h2>

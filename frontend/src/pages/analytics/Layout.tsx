@@ -25,7 +25,10 @@ export const useAnalytics = () => useOutletContext<AnalyticsContext>();
 export function AnalyticsLayout() {
   useTitle('Аналитика');
   const { me, teams } = useShell();
-  const [filters, setFilters] = useState<Filters>(() => load('sb2_filters', { scope: 'visible', mode: '', days: 0 }));
+  const isSupporter = Boolean(me?.is_supporter);
+  // Член команды (не саппортер) видит только свою команду: по умолчанию первая команда
+  const defaultScope = isSupporter ? 'visible' : (teams.length > 0 ? `team:${teams[0].id}` : 'visible');
+  const [filters, setFilters] = useState<Filters>(() => load('sb2_filters', { scope: defaultScope, mode: '', days: 0 }));
   const [minBattles, setMinBattlesState] = useState<number>(() => load('sb2_min', 3));
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,12 +52,14 @@ export function AnalyticsLayout() {
     return () => { alive = false; };
   }, [filters, minBattles, version]);
 
-  const scopeOptions: [string, string][] = [
-    ['visible', 'Мои и команды'], ['mine', 'Только мои'],
-    ...teams.map(t => [`team:${t.id}`, `Команда: ${t.name}`] as [string, string]),
-    ...(me?.is_admin ? [['all', 'Вся база']] as [string, string][] : []),
-  ];
-  const scopeName = scopeOptions.find(([v]) => v === filters.scope)?.[1] ?? 'Мои и команды';
+  // Саппортер видит всё: visible, mine, все свои команды, all (админ).
+  // Член команды без подписки видит только свои команды.
+  const scopeOptions: [string, string][] = isSupporter
+    ? [['visible', 'Мои и команды'], ['mine', 'Только мои'],
+       ...teams.map(t => [`team:${t.id}`, `Команда: ${t.name}`] as [string, string]),
+       ...(me?.is_admin ? [['all', 'Вся база']] as [string, string][] : [])]
+    : teams.map(t => [`team:${t.id}`, `Команда: ${t.name}`] as [string, string]);
+  const scopeName = scopeOptions.find(([v]) => v === filters.scope)?.[1] ?? (scopeOptions[0]?.[1] ?? 'Мои и команды');
 
   return (
     <div className="mx-auto max-w-[1440px] space-y-5">
