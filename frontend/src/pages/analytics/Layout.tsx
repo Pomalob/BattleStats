@@ -1,8 +1,7 @@
 import { useTitle } from '../../title';
-import { useCallback, useEffect, useState } from 'react';
-import { NavLink, Outlet, useOutletContext } from 'react-router-dom';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { NavLink, Outlet } from 'react-router-dom';
 import { api, AuthError, filterQuery, type Filters, type Mode, type Summary } from '../../api';
-import { useShell } from '../../components/Shell';
 import { Segmented, Select } from '../../components/ui';
 import { load, save } from '../../storage';
 
@@ -20,25 +19,21 @@ export interface AnalyticsContext {
   refresh: () => void;
   version: number;
 }
-export const useAnalytics = () => useOutletContext<AnalyticsContext>();
 
-export function AnalyticsLayout() {
-  useTitle('Аналитика');
-  const { me, teams } = useShell();
-  const isSupporter = Boolean(me?.is_supporter);
-  // Член команды (не саппортер) видит только свою команду: по умолчанию первая команда
-  const defaultScope = isSupporter ? 'visible' : (teams.length > 0 ? `team:${teams[0].id}` : 'visible');
-  const [filters, setFilters] = useState<Filters>(() => load('sb2_filters', { scope: defaultScope, mode: '', days: 0 }));
+const Ctx = createContext<AnalyticsContext | null>(null);
+
+export function useAnalytics() {
+  const c = useContext(Ctx);
+  if (!c) throw new Error('useAnalytics used outside AnalyticsProvider');
+  return c;
+}
+
+export function AnalyticsProvider({ filters, children }: { filters: Filters; children: ReactNode }) {
   const [minBattles, setMinBattlesState] = useState<number>(() => load('sb2_min', 3));
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
 
-  const update = (patch: Partial<Filters>) => {
-    const next = { ...filters, ...patch };
-    setFilters(next);
-    save('sb2_filters', next);
-  };
   const setMinBattles = (v: number) => { setMinBattlesState(v); save('sb2_min', v); };
   const refresh = useCallback(() => setVersion(v => v + 1), []);
 
@@ -52,14 +47,26 @@ export function AnalyticsLayout() {
     return () => { alive = false; };
   }, [filters, minBattles, version]);
 
-  // Саппортер видит всё: visible, mine, все свои команды, all (админ).
-  // Член команды без подписки видит только свои команды.
-  const scopeOptions: [string, string][] = isSupporter
-    ? [['visible', 'Мои и команды'], ['mine', 'Только мои'],
-       ...teams.map(t => [`team:${t.id}`, `Команда: ${t.name}`] as [string, string]),
-       ...(me?.is_admin ? [['all', 'Вся база']] as [string, string][] : [])]
-    : teams.map(t => [`team:${t.id}`, `Команда: ${t.name}`] as [string, string]);
-  const scopeName = scopeOptions.find(([v]) => v === filters.scope)?.[1] ?? (scopeOptions[0]?.[1] ?? 'Мои и команды');
+  return (
+    <Ctx.Provider value={{ filters, summary, error, minBattles, setMinBattles, refresh, version }}>
+      {error && <div className="rounded-lg border border-loss/40 bg-loss/10 px-4 py-3 text-[13px]">{error}</div>}
+      {children}
+    </Ctx.Provider>
+  );
+}
+
+export function AnalyticsLayout() {
+  useTitle('Аналитика');
+  const [filters, setFilters] = useState<Filters>(() => {
+    const saved = load<Partial<Filters>>('sb2_filters', {});
+    return { scope: 'mine', mode: saved.mode ?? '', days: saved.days ?? 0 };
+  });
+
+  const update = (patch: Partial<Pick<Filters, 'mode' | 'days'>>) => {
+    const next = { ...filters, ...patch };
+    setFilters(next);
+    save('sb2_filters', next);
+  };
 
   return (
     <div className="mx-auto max-w-[1440px] space-y-5">
@@ -67,13 +74,12 @@ export function AnalyticsLayout() {
         <div>
           <h1 className="text-[26px] font-extrabold tracking-tight">Аналитика</h1>
           <p className="mt-0.5 text-[13px] text-muted">
-            {scopeName} · {MODES.find(([m]) => m === filters.mode)?.[1].toLowerCase()} ·{' '}
+            Только мои · {MODES.find(([m]) => m === filters.mode)?.[1].toLowerCase()} ·{' '}
             {PERIODS.find(([d]) => Number(d) === filters.days)?.[1].toLowerCase()}
           </p>
         </div>
         <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">
           <Segmented label="Режим боёв" value={filters.mode} options={MODES} onChange={mode => update({ mode })} />
-          <Select label="Чьи бои" value={filters.scope} options={scopeOptions} onChange={scope => update({ scope })} />
           <Select label="Период" value={String(filters.days)} options={PERIODS} onChange={d => update({ days: Number(d) })} />
         </div>
       </header>
@@ -89,8 +95,9 @@ export function AnalyticsLayout() {
         ))}
       </nav>
 
-      {error && <div className="rounded-lg border border-loss/40 bg-loss/10 px-4 py-3 text-[13px]">{error}</div>}
-      <Outlet context={{ filters, summary, error, minBattles, setMinBattles, refresh, version } satisfies AnalyticsContext} />
+      <AnalyticsProvider filters={filters}>
+        <Outlet />
+      </AnalyticsProvider>
     </div>
   );
 }

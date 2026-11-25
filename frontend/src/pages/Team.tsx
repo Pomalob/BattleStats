@@ -1,11 +1,12 @@
 import { useTitle } from '../title';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, AuthError, send, type Team } from '../api';
+import { api, AuthError, send, type Filters, type Team } from '../api';
 import { useShell } from '../components/Shell';
 import { Button, Field, Panel, Select } from '../components/ui';
 import { fmt, plural } from '../format';
-import { save } from '../storage';
+import { AnalyticsProvider } from './analytics/Layout';
+import { Overview } from './analytics/Overview';
 
 interface Member { user_id: number; username: string; role: string; battles: number }
 interface Invite { code: string; expires_at: string; max_uses: number | null; uses: number }
@@ -15,9 +16,44 @@ const ROLES: Record<string, string> = { owner: 'владелец', member: 'уч
 
 export function TeamPage() {
   useTitle('Команда');
-  const { me, teams, reloadTeams } = useShell();
-  const [params, setParams] = useSearchParams();
+  const { teams } = useShell();
+  const [params] = useSearchParams();
+  const [settings, setSettings] = useState(false);
   const current = Number(params.get('id')) || teams[0]?.id || null;
+  const showSettings = settings || !current;
+
+  return (
+    <div className="mx-auto max-w-[1200px] space-y-5">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <h1 className="text-[26px] font-extrabold tracking-tight">Команда</h1>
+        {current && (
+          <Button variant="ghost" onClick={() => setSettings(s => !s)}>
+            {settings ? '← К аналитике' : 'Настройки команды'}
+          </Button>
+        )}
+      </header>
+      {showSettings ? <TeamSettings current={current} /> : <TeamClan key={current} id={current} />}
+    </div>
+  );
+}
+
+function TeamClan({ id }: { id: number }) {
+  const filters = useMemo<Filters>(() => ({ scope: `team:${id}`, mode: 'clan', days: 0 }), [id]);
+  return (
+    <AnalyticsProvider filters={filters}>
+      <nav className="flex gap-1 border-b border-line-soft">
+        <span className="relative px-3.5 pb-2.5 pt-1 text-[13.5px] font-semibold text-ink after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent">
+          Моя команда · Клановые
+        </span>
+      </nav>
+      <Overview />
+    </AnalyticsProvider>
+  );
+}
+
+function TeamSettings({ current }: { current: number | null }) {
+  const { me, teams, reloadTeams } = useShell();
+  const [, setParams] = useSearchParams();
   const [name, setName] = useState('');
   const [createError, setCreateError] = useState('');
 
@@ -32,11 +68,8 @@ export function TeamPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1200px] space-y-5">
-      <header>
-        <h1 className="text-[26px] font-extrabold tracking-tight">Команда</h1>
-        <p className="mt-0.5 text-[13px] text-muted">Участники видят бои друг друга в аналитике. Вступить можно только по ссылке от владельца.</p>
-      </header>
+    <>
+      <p className="-mt-3 text-[13px] text-muted">Участники видят бои друг друга в аналитике команды. Вступить можно только по ссылке от владельца.</p>
       <div className="grid items-start gap-5 lg:grid-cols-[280px_1fr]">
         <aside className="space-y-4">
           <Panel title="Мои команды">
@@ -63,7 +96,7 @@ export function TeamPage() {
           onGone={async () => { await reloadTeams(); setParams({}); }} />
           : <Panel className="p-8 text-center text-[13.5px] text-muted">Создай команду и пригласи друзей по ссылке.</Panel>}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -74,7 +107,6 @@ function TeamView({ id, meId, onChanged, onGone }: { id: number; meId?: number; 
   const [uses, setUses] = useState('');
   const [rename, setRename] = useState('');
   const [copied, setCopied] = useState('');
-  const navigate = useNavigate();
 
   const reload = useCallback(() => {
     api<TeamDetails>(`/api/teams/${id}`).then(t => { setTeam(t); setRename(t.name); })
@@ -92,14 +124,9 @@ function TeamView({ id, meId, onChanged, onGone }: { id: number; meId?: number; 
   return (
     <div className="space-y-4">
       <Panel>
-        <div className="flex flex-wrap items-center justify-between gap-3 p-5">
-          <div>
-            <div className="text-[12px] font-semibold text-muted">Команда · {ROLES[team.role] ?? team.role}</div>
-            <div className="text-[22px] font-extrabold tracking-tight">{team.name}</div>
-          </div>
-          <Button variant="ghost" onClick={() => { save('sb2_filters', { scope: `team:${team.id}`, mode: '', days: 0 }); navigate('/analytics'); }}>
-            Аналитика команды →
-          </Button>
+        <div className="p-5">
+          <div className="text-[12px] font-semibold text-muted">Команда · {ROLES[team.role] ?? team.role}</div>
+          <div className="text-[22px] font-extrabold tracking-tight">{team.name}</div>
         </div>
       </Panel>
       {error && <div className="rounded-lg border border-loss/40 bg-loss/10 px-4 py-3 text-[13px]">{error}</div>}

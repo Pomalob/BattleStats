@@ -1,0 +1,26 @@
+INFO:     Started server process [2036]
+INFO:     Waiting for application startup.
+Traceback (most recent call last):
+  File "D:\Claude\проекты\BattleStats\src\app.py", line 52, in lifespan
+    init_db()
+  File "D:\Claude\проекты\BattleStats\src\database.py", line 226, in init_db
+    with get_conn() as conn:
+         ^^^^^^^^^^
+  File "C:\Users\men_f\AppData\Local\Programs\Python\Python312\Lib\contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "D:\Claude\проекты\BattleStats\src\database.py", line 200, in get_conn
+    pool = _get_pool()
+           ^^^^^^^^^^^
+  File "D:\Claude\проекты\BattleStats\src\database.py", line 183, in _get_pool
+    DB_POOL_MIN, DB_POOL_MAX, build_dsn(DATABASE_URL),
+                              ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Claude\проекты\BattleStats\src\database.py", line 160, in build_dsn
+    raise RuntimeError("DATABASE_URL not set")
+RuntimeError: DATABASE_URL not set
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('127.0.0.1', 8000): [winerror 10048] обычно разрешается только одно использование адреса сокета (протокол/сетевой адрес/порт)
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+[DB] DATABASE_URL set: False
+[DB] init failed: DATABASE_URL not set
