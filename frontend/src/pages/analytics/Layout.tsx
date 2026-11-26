@@ -69,9 +69,9 @@ export function AnalyticsLayout() {
     save('sb2_filters', next);
   };
 
-  const { me, teams } = useShell();
+  const { me, teams, teamsReady } = useShell();
   // Пока не известно, есть ли подписка или команда, не показываем «нужна подписка» раньше времени.
-  if (!me) return <div className="mx-auto max-w-[1440px]"><div className="h-64 animate-pulse rounded-lg bg-surface-2" /></div>;
+  if (!me || !teamsReady) return <div className="mx-auto max-w-[1440px]"><div className="h-64 animate-pulse rounded-lg bg-surface-2" /></div>;
   if (!me.is_supporter && teams.length === 0) return <NoAnalyticsAccess />;
 
   return (

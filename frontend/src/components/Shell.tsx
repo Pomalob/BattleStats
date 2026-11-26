@@ -3,7 +3,13 @@ import { Link, Navigate, NavLink, Outlet, useLocation, useOutletContext } from '
 import { api, AuthError, send, token, supporterMe, type Me, type Team, type Subscription } from '../api';
 import { Button } from './ui';
 
-export interface ShellContext { me: Me | null; teams: Team[]; reloadTeams: () => Promise<void> }
+export interface ShellContext {
+  me: Me | null;
+  teams: Team[];
+  /** Команды уже загружены (успешно или нет): можно решать про доступ. */
+  teamsReady: boolean;
+  reloadTeams: () => Promise<void>;
+}
 export const useShell = () => useOutletContext<ShellContext>();
 
 export function Logo() {
@@ -117,7 +123,7 @@ export function Shell() {
       </aside>
       <div className="flex min-w-0 flex-col">
         <main className="min-w-0 flex-1 px-4 py-5 sm:px-6 lg:px-8">
-          <Outlet context={{ me, teams, reloadTeams } satisfies ShellContext} />
+          <Outlet context={{ me, teams, teamsReady, reloadTeams } satisfies ShellContext} />
         </main>
         <Footer />
       </div>
