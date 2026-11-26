@@ -46,13 +46,20 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
 export function Shell() {
   const [me, setMe] = useState<Me | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsReady, setTeamsReady] = useState(false);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [hideSupporterNotice, setHideSupporterNotice] = useState(false);
   const location = useLocation();
   const signedIn = Boolean(token());
 
   const reloadTeams = useCallback(async () => {
-    const t = await api<{ teams: Team[] }>('/api/teams');
-    setTeams(t.teams);
+    try {
+      const t = await api<{ teams: Team[] }>('/api/teams');
+      setTeams(t.teams);
+    } finally {
+      // Даже при ошибке не держим страницу в состоянии «данные ещё грузятся».
+      setTeamsReady(true);
+    }
   }, []);
   useEffect(() => {
     if (!signedIn) return;
@@ -115,12 +122,24 @@ export function Shell() {
         <Footer />
       </div>
       {me?.consent_required && <ConsentPrompt onDone={() => setMe({ ...me, consent_required: false })} />}
-      {!isSupporter && teams.length === 0 && location.pathname.startsWith('/analytics') && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-bg/90 backdrop-blur-sm">
-          <div className="rounded-xl border border-loss/40 bg-surface p-6 text-center max-w-md mx-4">
-            <h2 className="text-[17px] font-extrabold mb-2">Нужна подписка</h2>
-            <p className="mb-4 text-[13px] text-muted">Аналитика доступна только поддерживающим проект. Подпишись на Boosty и напиши администратору с ником — выдадим доступ.</p>
-            <a href="https://boosty.to/dotsuris" target="_blank" rel="noopener noreferrer" className="inline-block rounded-md bg-accent px-5 py-2 text-[13px] font-bold text-bg hover:bg-accent-hover">Поддержать на Boosty</a>
+      {me && teamsReady && !isSupporter && teams.length === 0 && !hideSupporterNotice
+        && location.pathname.startsWith('/analytics') && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-bg/90 p-4 backdrop-blur-sm"
+          onClick={() => setHideSupporterNotice(true)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="supporter-notice-title"
+            onClick={e => e.stopPropagation()}
+            className="relative w-full max-w-md rounded-xl border border-line-soft bg-surface p-6 text-center shadow-2xl">
+            <button type="button" aria-label="Закрыть" onClick={() => setHideSupporterNotice(true)}
+              className="absolute right-2.5 top-2.5 rounded-md px-2 py-1 text-[15px] leading-none text-muted transition-colors hover:bg-surface-2 hover:text-ink">
+              ✕
+            </button>
+            <h2 id="supporter-notice-title" className="mb-2 text-[17px] font-extrabold">Нужна подписка</h2>
+            <p className="mb-5 text-[13px] text-muted">Аналитика доступна только поддерживающим проект. Подпишись на Boosty и напиши администратору с ником — выдадим доступ.</p>
+            <div className="flex flex-col items-center justify-center gap-2 sm:flex-row">
+              <a href="https://boosty.to/dotsuris" target="_blank" rel="noopener noreferrer"
+                className="rounded-md bg-accent px-5 py-2 text-[13px] font-bold text-bg hover:bg-accent-hover">Поддержать на Boosty</a>
+              <Button variant="ghost" onClick={() => setHideSupporterNotice(true)}>Закрыть</Button>
+            </div>
           </div>
         </div>
       )}

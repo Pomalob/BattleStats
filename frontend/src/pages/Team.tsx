@@ -7,6 +7,7 @@ import { Button, Field, Panel, Select } from '../components/ui';
 import { fmt, plural } from '../format';
 import { AnalyticsProvider } from './analytics/Layout';
 import { Overview } from './analytics/Overview';
+import { BattlesTab, MapsTab, PlayersTab, TanksTab } from './analytics/Tabs';
 
 interface Member { user_id: number; username: string; role: string; battles: number }
 interface Invite { code: string; expires_at: string; max_uses: number | null; uses: number }
@@ -14,43 +15,87 @@ interface TeamDetails { id: number; name: string; role: string; members: Member[
 
 const ROLES: Record<string, string> = { owner: 'владелец', member: 'участник', admin: 'админ' };
 
+const TEAM_TABS: [string, string][] = [
+  ['overview', 'Обзор'],
+  ['players', 'Игроки'],
+  ['tanks', 'Танки'],
+  ['maps', 'Карты'],
+  ['battles', 'Бои'],
+  ['settings', 'Настройки'],
+];
+
+const PERIODS: [string, string][] = [['0', 'Всё время'], ['7', '7 дней'], ['30', '30 дней'], ['90', '90 дней']];
+
+const tabClass = (active: boolean) => `relative shrink-0 px-3.5 pb-2.5 pt-1 text-[13.5px] font-semibold transition-colors duration-150 ${
+  active ? 'text-ink after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent'
+    : 'text-muted hover:text-ink'}`;
+
 export function TeamPage() {
   useTitle('Команда');
   const { teams } = useShell();
   const [params] = useSearchParams();
-  const [settings, setSettings] = useState(false);
+  const [tab, setTab] = useState('overview');
   const current = Number(params.get('id')) || teams[0]?.id || null;
-  const showSettings = settings || !current;
+  const team = teams.find(t => t.id === current) ?? null;
+  // Без команды показывать нечего, кроме управления: сразу открываем настройки.
+  const settings = !current || tab === 'settings';
 
   return (
-    <div className="mx-auto max-w-[1200px] space-y-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
+    <div className="mx-auto max-w-[1440px] space-y-5">
+      <header>
         <h1 className="text-[26px] font-extrabold tracking-tight">Команда</h1>
-        {current && (
-          <Button variant="ghost" onClick={() => setSettings(s => !s)}>
-            {settings ? '← К аналитике' : 'Настройки команды'}
-          </Button>
-        )}
+        <p className="mt-0.5 text-[13px] text-muted">
+          {team ? `${team.name} · ${ROLES[team.role] ?? team.role}` : 'Клановые бои команды и управление участниками.'}
+        </p>
       </header>
-      {showSettings ? <TeamSettings current={current} /> : <TeamClan key={current} id={current} />}
+
+      {current && (
+        <nav aria-label="Разделы команды" className="flex gap-1 overflow-x-auto border-b border-line-soft [scrollbar-width:none]">
+          {TEAM_TABS.map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setTab(key)} aria-current={tab === key ? 'page' : undefined}
+              className={tabClass(tab === key)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {settings
+        ? <TeamSettings current={current} />
+        : current ? <TeamClan key={current} id={current} tab={tab} /> : null}
     </div>
   );
 }
 
-function TeamClan({ id }: { id: number }) {
-  const filters = useMemo<Filters>(() => ({ scope: `team:${id}`, mode: 'clan', days: 0 }), [id]);
+/** Клановые бои команды: все участники, режим «Клановые». */
+function TeamClan({ id, tab }: { id: number; tab: string }) {
+  const [days, setDays] = useState(0);
+  const filters = useMemo<Filters>(() => ({ scope: `team:${id}`, mode: 'clan', days }), [id, days]);
+
   return (
-    <AnalyticsProvider filters={filters}>
-      <nav className="flex gap-1 border-b border-line-soft">
-        <span className="relative px-3.5 pb-2.5 pt-1 text-[13.5px] font-semibold text-ink after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-accent">
-          Моя команда · Клановые
-        </span>
-      </nav>
-      <Overview />
-    </AnalyticsProvider>
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-[20px] font-extrabold tracking-tight">Клановые бои команды</h2>
+          <p className="mt-0.5 text-[13px] text-muted">
+            Бои всех участников · {PERIODS.find(([d]) => Number(d) === days)?.[1].toLowerCase()}
+          </p>
+        </div>
+        <Select label="Период" value={String(days)} options={PERIODS} onChange={d => setDays(Number(d))} />
+      </div>
+
+      <AnalyticsProvider filters={filters}>
+        {tab === 'players' ? <PlayersTab />
+          : tab === 'tanks' ? <TanksTab />
+          : tab === 'maps' ? <MapsTab />
+          : tab === 'battles' ? <BattlesTab />
+          : <Overview />}
+      </AnalyticsProvider>
+    </div>
   );
 }
 
+/** Управление командой: список команд, создание, участники, приглашения, переименование, удаление. */
 function TeamSettings({ current }: { current: number | null }) {
   const { me, teams, reloadTeams } = useShell();
   const [, setParams] = useSearchParams();
@@ -69,7 +114,7 @@ function TeamSettings({ current }: { current: number | null }) {
 
   return (
     <>
-      <p className="-mt-3 text-[13px] text-muted">Участники видят бои друг друга в аналитике команды. Вступить можно только по ссылке от владельца.</p>
+      <p className="text-[13px] text-muted">Участники видят бои друг друга в аналитике команды. Вступить можно только по ссылке от владельца.</p>
       <div className="grid items-start gap-5 lg:grid-cols-[280px_1fr]">
         <aside className="space-y-4">
           <Panel title="Мои команды">

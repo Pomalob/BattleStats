@@ -2,7 +2,8 @@ import { useTitle } from '../../title';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { api, AuthError, filterQuery, type Filters, type Mode, type Summary } from '../../api';
-import { Segmented, Select } from '../../components/ui';
+import { useShell } from '../../components/Shell';
+import { Panel, Segmented, Select } from '../../components/ui';
 import { load, save } from '../../storage';
 
 export const MODES: [Mode, string][] = [['', 'Все режимы'], ['clan', 'Клановые'], ['onslaught', 'Натиск'], ['standard', 'Стандартные']];
@@ -68,6 +69,11 @@ export function AnalyticsLayout() {
     save('sb2_filters', next);
   };
 
+  const { me, teams } = useShell();
+  // Пока не известно, есть ли подписка или команда, не показываем «нужна подписка» раньше времени.
+  if (!me) return <div className="mx-auto max-w-[1440px]"><div className="h-64 animate-pulse rounded-lg bg-surface-2" /></div>;
+  if (!me.is_supporter && teams.length === 0) return <NoAnalyticsAccess />;
+
   return (
     <div className="mx-auto max-w-[1440px] space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -98,6 +104,29 @@ export function AnalyticsLayout() {
       <AnalyticsProvider filters={filters}>
         <Outlet />
       </AnalyticsProvider>
+    </div>
+  );
+}
+
+/** Заглушка вместо аналитики для тех, у кого нет ни подписки, ни команды. */
+function NoAnalyticsAccess() {
+  return (
+    <div className="mx-auto max-w-[1440px] space-y-5">
+      <header>
+        <h1 className="text-[26px] font-extrabold tracking-tight">Аналитика</h1>
+        <p className="mt-0.5 text-[13px] text-muted">Доступ по подписке или через команду.</p>
+      </header>
+      <Panel className="px-6 py-14 text-center">
+        <h2 className="text-[17px] font-extrabold">Нужна подписка</h2>
+        <p className="mx-auto mt-2 max-w-md text-[13px] text-muted">
+          Аналитика доступна поддерживающим проект. Подпишись на Boosty и напиши администратору свой ник — доступ выдадут вручную.
+          Если ты в команде, аналитика команды открыта без подписки.
+        </p>
+        <a href="https://boosty.to/dotsuris" target="_blank" rel="noopener noreferrer"
+          className="mt-5 inline-block rounded-md bg-accent px-5 py-2 text-[13px] font-bold text-bg hover:bg-accent-hover">
+          Поддержать на Boosty
+        </a>
+      </Panel>
     </div>
   );
 }
